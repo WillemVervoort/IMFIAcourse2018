@@ -1,0 +1,194 @@
+---
+title: "Hydromad optimisation of rainfall runoff models"
+author: "Willem Vervoort"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    number_sections: true
+    toc: true
+    toc_depth: 2
+---
+```{r setup, echo=F, warning=F, message=F}
+# root dir
+knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(lubridate)
+require(knitr)
+```
+
+# R for hydrological optimisation (hydromad example)
+
+In this practical session we will apply what we learned from our simple optimisation to hydrological modelling. It will also include a practical example of how you can use R to do hydrological modelling using the package hydromad.
+
+## The package hydromad
+
+The R package Hydromad is an add-in into R that deals specifically with hydrological modelling: <http://hydromad.catchment.org/>. It incorporates a range of models, and provides tools for calibration, validation and error checking.
+Installation of Hydromad can be a bit tricky, ask Willem for help if you want to install it on your personal computer:
+
+* In R, install a series of packages: 
+'install.packages(c("zoo", "latticeExtra", "polynom", "car", "Hmisc"))'  
+* Follow the instructions on: <http://hydromad.catchment.org/#installation> to install the main package  
+
+One difference between the previous material and this example with hydromad is that hydromad uses the package lattice for plotting rather than ggplot2 (which I have used earlier). Maybe in the future this can be changed to ggplot2, but currently this is not a priority.
+This means that you will see the functions `xyplot()` and `levelplot` used rather than ggplot.
+
+Once the package is installed, load it:
+```{r hydromad}
+require(hydromad)
+```
+
+## the data for the example
+
+As a first example, we will use the data from the Cotter river that come with the package. However, for your practical application you will use the data from the Santa Lucia catchment, which we will preprocess this data to work with hydromad.
+
+```{r loadCotter, fig.cap = "plot of the data in the Cotter data set"}
+data(Cotter)
+# show first 6 rows
+head(Cotter)
+# Make a plot of the data
+xyplot(Cotter)
+```
+
+The data is a `zoo` object, which means it uses "time and date" as the row indicator. The data has three columns: P, Q, and E, which stand for Rainfall (P), streamflow (Q) and Evaporation (potential) (E). However, the E column can also be maximum daily temperature, which in this case is in the data.
+
+## GR4J
+
+GR4J is a simple conceptual rainfall-runoff model, developed in France. The associated paper is:
+Perrin, C., Michel, C., Andreassian, V., 2003. Improvement of a parsimonious model for streamflow simulation. Journal of Hydrology, 279(1-4): 275-289.
+
+The power of GR4J is that it only has 4 parameters, which you could also consider its limitation. However, the strategic choices within the structure means that the model is highly flexible and easy to fit to all kinds of streamflow data.
+
+```{r GR4J_graphic, echo=F}
+include_graphics("../Data/GR4JStructure.png")
+```
+
+# Defining the GR4J model in Hydromad  
+
+We now need to specify our first model. The beauty of hydromad is that there are actually a range of different models that can be applied and these are discussed in much more detail on the [website](http://hydromad.catchment.org/). We will just go through how you specify a model based on GR4j. 
+
+## A example of the hydromad object structure
+The first model we will define demonstrates the typical hydromad model structure. It has arbitrary parameters (it is not calibrated) to demonstrate the different input and output from the hydromad model.
+
+```{r simplGR4JDef}
+# specify a model structure (GR4J) with some arbritrary parameters
+CMod <- hydromad(Cotter[1:1000,], sma="gr4j", routing="gr4jrouting",etmult=0.15,
+                 x1 = 665, x2 = 10, x3 = 90, x4 = 3.8)
+```
+
+### Explanation  
+The model object uses in this case only the first 1000 rows of the dataset, simply to speed up computation.
+
+The hydromad function defines an object consisting of  
+1) the soil moisture accounting (the water balance) component. This is defined by `sma` which in this case is `gr4j`.  
+2) the routing component, which is defined separately as `routing = "gr4jrouting"`.  
+You could include different `sma` and different `routing` in the object depending on which model you would like to use.
+
+In the hydromad function, the parameters x1, x2, x3 and x4 which relate to processes in the model are defined, and in this case defined to a single value. Another parameter that is defined is etmult, which describes the conversion of maximum temperature to potential ET. While the suggested value of etmult is 0.15, this parameter can vary from catchment to catchment. These 5 parameters are the main **calibratable** parameters. 
+
+
+## plot of components  
+To demonstrate the different outputs that the model provides, we can make a plot again. 
+
+```{r plotGR4J, fig.cap="Plot of GR4J with hypothetical parameters"}
+xyplot(predict(CMod, return_state = TRUE, 
+               return_components = TRUE),
+       strip = FALSE, strip.left = TRUE)
+```
+
+### explanation  
+This figure indicates the different components of the GR4J model. This includes the "effective rainfall" U, which is the rainfall minus the ET, the storage levels in the "production store" or soil bucket, the predicted ET from the soil bucket, the fast flow Xr and the slow flow Xd and finally the levels in the groundwater store.  
+
+**Question**  
+- Consider how each of the 5 calibratable parameters influence the model. You can try changing the parameters and see if it changes the model.  
+
+## Extracting information from the model object  
+We can also ask for the parameters and the information that we have stored in the model object using a simple print() statement.  
+```{r printPar}
+print(CMod)
+```
+
+The first part of the output from the print statement indicates the SMA parameters that we have entered in the model. Here x1 is set to 665 mm and again the et multiplier is set to 0.15 to convert Maximum Temperature to potential ET. S_0 is the initial storage level as a fraction of x1, this means the initial S is 0.5*665, you can check this on the figure. The default ranges for all parameters for all models can be found by entering:  
+```{r h_options, eval = FALSE}
+hydromad.options()
+```
+
+The routing parameters relate to the x2 through x4 parameters and are listed in the second part of the output. You can also just print the coefficients, by using the `coefficients()` function.
+
+```{r printCoef}
+coefficients(CMod)
+```
+
+# Optimisation using hydromad  
+
+We now want to calibrate the model on some data (which means optimising the paramaters in the model).
+
+## splitting the data using `window()`
+To speed up the optimisation, we will just take the first part of the data. Here we will use 6 years. The function `window()` provides a tool to split a `zoo` object into different sections.
+
+```{r}
+# split the data to use for calibration 
+Data_Cal<- window(Cotter, start = "1970-01-01",end = "1975-12-31")
+```
+
+## defining the parameter ranges in the object  
+You can now start fitting the model, using an optimisation routine.
+However this first means we have to redefine the model to include ranges (from...to) for the parameters rather than single values. This means the optimisation routine will search through the range to identify the "best" parameter set. As a first example, I have decided to fit all parameters. The choice of the ranges is somewhat arbitrary. The original paper by Perrin et al. (2003) gives some suggestions, but I have increased the range for x1 to be quite high. 
+
+**Question**  
+- What is the interpretation of a high value of x1? What kind of behaviour does this induce?
+- What type of catchment characteristics might be related to this?  
+- For a Uruguayan catchment, do you think x1 would be high or low?
+
+```{r define_par_range}
+CMod <- hydromad(Data_Cal, 
+                 sma="gr4j", routing="gr4jrouting",
+  etmult=c(0.05,0.5),x1 = c(1000,3000), x2 = c(-3,20), 
+  x3 =c(5,500), x4 = c(0.5,10))
+```
+
+## Optimisation  
+
+Hydromad includes several different optimisation routines, please see the [website under the calibration menu item](http://hydromad.catchment.org/). Here we will start by using the optimisation routine based on `optim()`, which we also used in our first parts of this tutorial.
+Using the hydromad function `fitByOptim` we can calibrate the model.  
+```{r fitByOptim}
+CotterFit <- fitByOptim(CMod,
+                objective=~hmadstat("r.squared")(Q,X),
+                        samples=1000,method="PORT")
+```
+
+The method `PORT` is one of the specific methods that can be used in `optim`(), but different other methods can be specified. Felix Andrews  (Andrews et al. 2011) suggests that this routine is preferred, but you could try another method. The standard `nelder mead` is a regular least squares optimisation.
+
+The fitting proceduregives some output about the iterations to the console screen it runs through and also possible warnings. 
+Finally you can inspect the summary of the model output using the function `summary()`.
+
+```{r fit_summary}
+summary(CotterFit)
+```
+
+This returns the fitted values of the fit and the different goodness of fit stats. Note that in this case `r round(summary(CotterFit)$r.squared*100,2)` percent of the variation in the streamflow is being explained by this model based on the r^2^, which is really the NSE (Nash Sutcliffe Efficiency) in hydromad (see [http://hydromad.catchment.org/#hydromad.stats](http://hydromad.catchment.org/#hydromad.stats). This statistic is biased towards the high flows and is highly affectedby timing errors (Bennett et al. 2013).
+
+The other statistics are   
+1. the relative bias (basically the mean error divided by the mean flow) which is equal to `r summary(CotterFit)$rel.bias`.   
+2. The r.sq.sqrt is the r^2^ based on a square root transformation of the data. This probably reflects the best overall fit to the data.  
+3. The r.sq.log is the r^2^ based on a logarithmic transformation of the data.This statistic is suggested to be more indicative of the fit on the low flows (Bennett et al., 2013). So in this case the model seems to fit the low flows better than the high flows.  
+
+The fitted coefficients can once again be extracted separately by using the `coefficients()` function:    
+```{r coef_hydromad}
+coef(CotterFit)
+```
+
+**Question**  
+- Can you interpret the fitted coefficients in terms of catchment processes? What do the fitted coefficients suggest in terms of how the catchment behaves.  
+
+## Plotting the fit  
+To get a visual interpretation of the temporal variation in the model fit, we can plot the observed data with the predicted output and the rainfall.  
+
+```{r plotFit, fig.cap="Predicted and observed flow for Cotter for the calibration period"}
+# plot observed vs modelled with the rainfall (Figure 5)
+xyplot(CotterFit, with.P=TRUE, xlim=as.Date(c("1970-01-01", "1975-01-01")))
+```
+
+\center
+**END OF DOCUMENT**
+\center

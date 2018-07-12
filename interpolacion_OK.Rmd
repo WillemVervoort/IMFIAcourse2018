@@ -1,0 +1,345 @@
+---
+title: "Interpolación 1.1"
+author: "Rafael Navas"
+date: "July 5, 2018"
+output: html_document
+---
+
+
+```{r setup, include=FALSE,echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#library(tinytex)
+rm(list=ls())
+```
+
+#Introducción
+Esta práctica tiene como propósito estimar la precipitación media en subcuencas. Para ello se hará uso del paquete gstat (http://www.gstat.org/) y la información pluviométrica de la cuenca del río Santa Lucía hasta Paso Pache.
+
+#Lectura de datos y verificaciones básicas
+
+Paso 0. La siguiente acción borra todas las variables de su espacio de trabajo en "r", tenga cuidado al aplicarla
+```{r}
+rm(list=ls())
+```
+
+
+Paso 1. Cambie y configure su directorio de trabajo "wd". Tenga en cuenta que éste script no hace uso de la función "setwd()", y todas las lecturas se realizan utilizando la función "paste()" que permite concatenar texto. Tenga cuidado de conservar el formato adecuado.
+```{r}
+wd = "C:/Users/Rafael Navas/Documents/cursos/201807_ModHidro/interpolacion/"
+```
+
+
+Paso 2. Cargue las librerias o paquetes que necesitará
+```{r}
+library(maptools)
+```
+
+
+Paso 2. Cargue la informacion referente a la práctica de hoy "InterpolacionData.RDATA". El archivo contiene las siguientes variables:
+"channels"        canales 
+"dec"             sistema de referencia decimal
+"rg_dec"          coordenadas de las estaciones en WGS84 (matriz)
+"rg_utm"          coordenadas de las estaciones en UTM21s (SpatialPoints)
+"streamgauges"    puntos de caudal (Paso Pache, Fray Marcos y Paso de los Troncos)
+"subbasins"       Cuenca del Santa Lucia subdividido por 3 Subcuencas
+"tab"             datos de precipitación matriz: 13515dias + 28estaciones)
+"utm"             Sistema de referencia UTM zona 21sur
+```{r}
+load(paste(wd,"InterpolacionData.RDATA",sep=""))
+```
+
+Paso 3. Convierta "rg_dec" en SpatialPoint
+
+Paso 4. Grafique las cuencas, los ríos y las estaciones. Notese que todo se hace en el sistema UTM21s
+```{r}
+plot(rg_utm,axes=TRUE,pch=19,col=4)
+plot(subbasins,add=TRUE)
+plot(channels,add=T,col=4,lwd=2)
+plot(streamgauges,add=T,pch=25,bg=7)
+text(coordinates(subbasins)[,1],coordinates(subbasins)[,2],1:3,cex=3)
+```
+
+
+Paso 4. Observe la consistencia de los registros pluviométricos
+```{r}
+summary(tab)
+```
+
+
+#Verificación de la disponibilidad de datos
+
+Paso 5. Vea la disponibilidad de estaciones en función del tiempo
+```{r}
+na.count = is.na(tab[,2:29])
+na.count.pdt = apply(na.count,1,sum) #datos faltantes en funcion del tiempo
+plot(tab[,1],(28 - na.count.pdt),type="l",xlab="",ylab="Número de estaciones operativas",col=3)
+abline(h=round(mean(28 - na.count.pdt)))
+```
+La línea negra marca el promedio de estaciones operativas en el periodo 1981-2017
+
+
+Paso 5. Observe el porcentaje de información faltante de cada estación
+```{r}
+na.count.rg = apply(na.count,2,sum) #datos faltantes por estacion
+names(na.count.rg) = rownames(rg_dec)
+p.info.dis = na.count.rg/nrow(tab)*100
+barplot(p.info.dis[order(na.count.rg)])
+thr = 500/nrow(tab)*100 
+abline(h=thr,col=2)
+```
+La linea roja representa un umbral fijado de forma arbitraria en 500 días de información faltante (3.7%)
+
+
+#Definición de la red de trabajo
+En esta sección se eliminarán las estaciones con información faltante mayor a un umbral preestablecido
+
+
+Paso 6. Defina una red de trabajo eliminando las estaciones que tengan más datos faltantes de acuerdo con el umbral preestablecido.
+```{r}
+rg = names(na.count.rg)[na.count.rg<=500 ]
+rg.OK = coordinates(rg_utm)[rg,]
+rg.OK = SpatialPoints(rg.OK, proj4string=utm)
+```
+
+
+Paso 6. Verifique mediante un grafico su red de trabajo
+```{r}
+plot(rg_utm,axes=TRUE,pch=1,col=4,cex=1.3)
+plot(subbasins,add=TRUE)
+plot(channels,add=T,col=4,lwd=2)
+plot(streamgauges,add=T,pch=25,bg=7)
+plot(rg.OK,axes=TRUE,pch=19,col=4,add=TRUE,cex=1.2)
+```
+Los circulos vacíos son las estaciones que han sido excluidas por tener mas datos faltantes que el umbral que se fijó.
+
+
+#Krigeado de un día en particular de lluvia
+
+Paso 7. Se selecciona el día 468 por tener particularmente precipitacion localizada en la cabecera de la cuenca
+```{r}
+pdt = 468
+fecha = tab[pdt,"date"]
+	xyz = data.frame(x=coordinates(rg.OK)[,1],y=coordinates(rg.OK)[,2],
+							z=as.numeric(tab[pdt,rg]))
+	xyz = xyz[!is.na(xyz[,"z"]),]
+	print(paste("el día seleccionado corresponde al:",tab[pdt,"date"]))
+```
+
+
+#Estimación del variograma
+Esta sección calcula un variograma empírico para luego ajustar alguno de los modelos de variograma disponibles en el paquete gstat
+
+
+Paso 8. Calculamos el variograma empírico y ajustamos un modelo (e.g. Gaussiano:"Gau", Lineal:"Lin", Esférico:"Sph")
+```{r}
+library(gstat)
+		xyz.vgm = variogram(y~1,location = ~x+y,data=xyz)
+		xyz.fit = fit.variogram(xyz.vgm,
+					model=vgm(psill=1.,model="Lin",range=60000,nugget=0.),
+				fit.sills = TRUE, fit.ranges = FALSE,fit.method = 6)
+plot(xyz.vgm,xyz.fit)
+```
+Cambie el modelo de variograma!
+
+
+#Krigeado
+Esta sección realiza el calculo de la precipitación media en cada subcuenca a través del krigeado ordinario con el modelo de variograma obtenido anteriormente
+
+
+Paso 9. Se realiza el krigeado
+```{r}
+library(raster)
+xyz.sp = xyz
+	coordinates(xyz.sp) <- ~x + y
+		crs(xyz.sp) = utm
+		krig_sb = krige(z~1,xyz.sp,newdata=subbasins,model=xyz.fit,nmax=3)		
+```
+
+
+Paso 10. Visualización de resultados
+```{r}
+plot(subbasins)
+text(coordinates(xyz)[,1],coordinates(xyz)[,2],xyz$z)
+text(krig_sb$x,krig_sb$y,round(krig_sb$var1.pred,1),cex=2,col=2)
+```
+
+
+Paso 11 (Opcional). En este paso se creara un raster de tamaño de celda 1km x 1km para luego plotear los resultados de una forma mas elegante.
+```{r}
+
+ex = extent(rg_utm)
+r = raster(nrows=100,ncols=150,xmn=ex[1,],xmx=ex[2,],ymn=ex[3,],ymx=ex[4,],crs=utm)
+xy_r = coordinates(r)
+r.spdt = SpatialPoints(xy_r, proj4string=utm)
+krig_r = krige(z~1,xyz.sp,newdata=r.spdt,model=xyz.fit,nmax=3)	
+prec = krig_r$var1.pred
+prec[prec<=0] = 0
+values(r) = prec
+
+rc <- rasterToContour(r, levels=seq(0,100,20))
+plot(r)
+plot(subbasins,add=T,border=2,lwd=2)
+plot(rc,add=T)
+plot(rg_utm,add=T)
+```
+
+
+#Cómputo de la crónica de precipitación media
+Esta sección tiene por objetivo estimar la crónica de precipitación media, a paso diario, en cada una de las subcuencas y además guardar los resultados de la validación cruzada.
+
+
+Paso 12. 
+```{r,eval=TRUE}
+t1 = Sys.time()
+p_areal = data.frame(fecha=vector(length=0),p1=vector(length=0),p2=vector(length=0),p3=vector(length=0))
+p_val = data.frame(x=vector(length=0),y=vector(length=0),fecha=vector(length=0),
+			sim=vector(length=0),obs=vector(length=0))
+
+anhos = as.numeric(format(tab[,"date"],"%Y"))
+anhos = anhos==1990
+anhos = (1:nrow(tab))[anhos]
+  
+  
+for(pdt in anhos){
+ 
+fecha = tab[pdt,"date"]
+	xyz = data.frame(x=coordinates(rg.OK)[,1],y=coordinates(rg.OK)[,2],
+							z=as.numeric(tab[pdt,rg]))
+	xyz = xyz[!is.na(xyz[,"z"]),]
+
+	if(!all(xyz[,"z"]==0)){
+	#variograma
+		xyz.vgm = variogram(y~1,location = ~x+y,data=xyz)
+		xyz.fit = fit.variogram(xyz.vgm,
+					model=vgm(psill=1.,model="Sph",range=60000,nugget=0.),
+				fit.sills = TRUE, fit.ranges = FALSE,fit.method = 6)
+	#krigeado
+    xyz.sp = xyz
+	  coordinates(xyz.sp) <- ~x + y
+		crs(xyz.sp) = utm
+		krig_sb = krige(z~1,xyz.sp,newdata=subbasins,model=xyz.fit,nmax=3)		
+		p_areal = rbind(p_areal, data.frame(fecha=fecha,p1=krig_sb$var1.pred[1],
+					p2=krig_sb$var1.pred[2],p3=krig_sb$var1.pred[3]))
+
+	#cross-validation
+		krig_cv = krige.cv(z~1,xyz.sp,model=xyz.fit,nmax=5)
+		p_val = rbind(p_val,data.frame(x=coordinates(krig_cv)[,"x"],y=coordinates(krig_cv)[,"y"],
+					fecha=fecha,sim=krig_cv$var1.pred,obs=krig_cv$observed))
+	}else{
+		p_areal = rbind(p_areal, data.frame(fecha=fecha,p1=0,
+					p2=0,p3=0))
+	}
+}
+t2 = Sys.time()
+t2-t1
+
+```
+
+#Validación
+Esta seccion se enfocará en estudiar los resultados de la validación cruzada utilizando el sego y el R2 como criterios
+
+
+Paso 13. Se crean las funciones sesgo y r2
+```{r}
+R2.fun <- function(x, y) {summary(lm(y~x))$r.squared}
+bias.fun <- function(x,y){sum(x)/sum(y)}
+```
+
+
+Paso 14. Se calcula el sesgo y R2 de forma global
+```{r}
+coef.r2 = R2.fun(p_val[,"sim"],p_val[,"obs"])
+bias = bias.fun(p_val[,"sim"],p_val[,"obs"])
+round(coef.r2,2)
+round(bias,2)
+```
+
+
+
+Paso 15. Se calcula el sesgo y R2 por cada estación
+```{r}
+xy = unique(p_val[,c("x","y")])
+cv.rg = matrix(nrow=0,ncol=4)
+for(i in 1:nrow(xy)){
+	x = xy[i,"x"]
+	y = xy[i,"y"]
+	cond = (p_val[,"x"]==x) & (p_val[,"y"]==y)
+	aux = p_val[cond,]
+	coef.r2 = R2.fun(aux[,"sim"],aux[,"obs"])
+	bias = bias.fun(aux[,"sim"],aux[,"obs"])
+	aux = c(x=x,y=y,coef.r2=coef.r2,bias=bias)
+	cv.rg = rbind(cv.rg,aux)	
+}
+
+```
+
+
+Paso 16. Visualización de R2 por estación
+```{r}
+plot(subbasins,ylim=range(xy[,"y"]),xlim=range(xy[,"x"]),main="coef.r2")
+text(cv.rg[,"x"],cv.rg[,"y"],round(cv.rg[,"coef.r2"],2))
+```
+
+
+Paso 17. Visualización del sesgo por estación
+```{r}
+plot(subbasins,ylim=range(xy[,"y"]),xlim=range(xy[,"x"]),main="Sesgo")
+text(cv.rg[,"x"],cv.rg[,"y"],round(cv.rg[,"bias"],2))
+```
+
+
+Paso 17. Sesgo y coef.r2 por mes
+```{r}
+library(abind)
+
+meses = 1:12
+
+for(est in 1:nrow(xy)){						#seleccion por estacion
+	x = xy[est,"x"]	
+	y = xy[est,"y"]
+	cond = (p_val[,"x"]==x) & (p_val[,"y"]==y)
+	aux = p_val[cond,]
+	p_val.mes = as.numeric(format(aux[,"fecha"],"%m"))
+
+	r2.mes = vector(length=0)
+	bias.mes = vector(length=0)
+	n.mes = vector(length=0)
+	for(mm in meses){						#seleccion por año
+		cond = p_val.mes == mm
+		aux2 = aux[cond,]
+		r2.mes = c(r2.mes,R2.fun(aux2[,"sim"],aux2[,"obs"]))
+		bias.mes = c(bias.mes,sum(aux2[,"sim"])/sum(aux2[,"obs"]))
+		n.mes = c(n.mes,nrow(aux2))
+	}
+	st = cbind(coef.r2=r2.mes,bias=bias.mes,n=n.mes)
+	if(est==1){
+		cv.rg.mes = st
+	}else{
+		cv.rg.mes = abind(cv.rg.mes,st,along=3)
+	}
+}
+```
+
+
+Paso 18. Visualización de R2 por mes
+```{r}
+plot(meses,cv.rg.mes[,"coef.r2",1],ylim=c(0,1),ylab="R2",xlab="",type="l",col=8)
+for(i in 2:16){
+lines(meses,cv.rg.mes[,"coef.r2",i],col=8)
+}
+lines(meses,apply(cv.rg.mes[,"coef.r2",],1,mean),lwd=2)
+
+```
+
+Paso 19. Visualización del Sesgo por mes
+```{r}
+plot(meses,cv.rg.mes[,"bias",1],ylim=c(0.5,1.5),ylab="Bias",xlab="",type="l",col=8)
+for(i in 2:16){
+lines(meses,cv.rg.mes[,"bias",i],col=8)
+}
+lines(meses,apply(cv.rg.mes[,"bias",],1,mean),lwd=2)
+
+```
+
+Pregunta: Que inconveniente o limitación tienen los resultados de los pasos 18 y 19?
+

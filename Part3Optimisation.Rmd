@@ -1,0 +1,110 @@
+---
+title: "Part3OptimisationHydromad"
+author: "Willem Vervoort"
+date: "3 July 2018"
+output: pdf_document
+---
+
+This is the document that gives the code that was done in class for the third part of day 1
+
+```{r setup, echo = F}
+# root dir
+knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+```
+
+# Start of real code
+
+You might want to set your working directory
+
+```{r}
+setwd("C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+```
+
+packages
+```{r}
+require(hydromad)
+```
+
+Load the data
+```{r}
+data(Cotter)
+# show first 6 rows
+head(Cotter)
+```
+
+```{r}
+# Make a plot of the data
+xyplot(Cotter)
+```
+
+An example Hydromad structure
+
+```{r}
+# specify a model structure (GR4J) with some arbritrary parameters
+CMod <- hydromad(Cotter[1:1000,], sma="gr4j",
+                 routing="gr4jrouting",etmult=0.15,
+                 x1 = 665, x2 = 10, x3 = 90,
+                 x4 = 3.8)
+
+```
+
+You can plot what this model object would predict
+
+```{r}
+xyplot(predict(CMod, return_state = TRUE,
+  return_components = TRUE),
+  strip = FALSE, strip.left = TRUE)
+```
+Print
+```{r}
+print(CMod)
+```
+Coefficients
+```{r}
+coefficients(CMod)
+```
+
+# Optimisation with hydromad
+
+Split the data using window()
+```{r}
+# split the data to use for calibration
+Data_Cal<- window(Cotter, start = "1970-01-01",
+                  end = "1975-12-31")
+```
+
+Redfine the model with ranges for the parameters
+
+```{r}
+CMod <- hydromad(Data_Cal,
+  sma="gr4j", routing="gr4jrouting",
+  etmult=c(0.05,0.5),x1 = c(500,3000), 
+  x2 = c(-3,20),
+  x3 =c(5,500), x4 = c(0.5,10))
+```
+
+Use fitByOptim() to fit the model
+
+```{r}
+CotterFit <- fitByOptim(CMod,
+  objective=~hmadstat("r.squared")(Q,X),
+  samples=1000,method="PORT")
+```
+Ask for summary
+
+```{r}
+summary(CotterFit)
+```
+
+Plot the fit
+
+```{r}
+xyplot(CotterFit, with.P=TRUE,
+       xlim=as.Date(c("1974-01-01", "1975-12-31")))
+```
+
+
+
+
+
+

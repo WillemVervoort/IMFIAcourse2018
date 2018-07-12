@@ -1,0 +1,228 @@
+---
+title: "Demo distributed model"
+author: "Willem Vervoort & Rafael Navas"
+date: "9 July 2018"
+output: pdf_document
+---
+```{r setup, echo=F, warning=F, message=F}
+# root dir
+knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(lubridate)
+require(hydromad)
+require(knitr)
+```
+
+Set the working directory
+```{r, eval=F}
+ setwd("C:/Users/rver4657/Dropbox (Sydney Uni)/IMFIA_course_July2018")
+```
+
+Load packages
+
+```{r}
+require(tidyverse)
+require(lubridate)
+require(hydromad)
+```
+# Defining the model
+
+## Loading data and model functions
+
+Source the modelling functions
+
+```{r}
+source("scripts/GR4J@distr.R")
+```
+
+Load the data
+```{r}
+load("data/SL_distdata.RDATA")
+```
+
+Show the data
+```{r}
+head(SL_distdata)
+```
+
+show the parameters of the GR4J
+
+```{r}
+# for subbasin 1:
+All_par$Sub1.par
+names(All_par)
+```
+Parameters of the reaches
+
+```{r}
+# for subbasin 1:
+All_reach_par$reach1.par
+names(All_reach_par)
+```
+
+## Building the model
+
+Define the data window
+```{r}
+# Use data for 2000 - 2005
+Data_in <- window(SL_distdata,
+            start = "2000-01-01",
+            end ="2005-12-31")
+```
+
+Define and run the model
+
+```{r}
+SLrun = GR4JSubBasins.run(sb=3,
+                          order = c(1,2,3),
+                          Data = Data_in,
+                          spar = All_par,
+                          rpar = All_reach_par,
+                          sbnames = c("PasoTroncos",
+                          "FrayMarcos",
+                          "PasoPache"),
+                          return_state = T)
+```
+
+plot the result of the function
+
+```{r}
+xyplot(SLrun)
+```
+
+# Optimisation
+
+Five steps:  
+- Create vector x  
+- Create vector par
+- Create vector calibrate_on
+- Data and model_input  
+- Create function for objective function
+
+## step 1 create x
+
+```{r}
+# initial guesses, using the SubX.par in All_par. and
+# reachX.par in All_reach_par, where X is a number
+x <- c(All_par$Sub1.par[2:5], All_par$Sub2.par[2:5],
+All_par$Sub3.par[2:5], All_reach_par$reach1.par,
+All_reach_par$reach2.par)
+str(x)
+```
+
+## step 2 define parameters
+
+```{r}
+# all the parameters of the model
+par_in <- c(All_par$Sub1.par, All_par$Sub2.par,
+All_par$Sub3.par, All_reach_par$reach1.par,
+All_reach_par$reach2.par)
+str(par_in)
+```
+
+## step 3 vector to match positions from par to x
+
+```{r}
+# define which parameters to calibrate
+# We want to
+Fit_these <- c(2:5,7:10,12:19)
+
+str(par_in[Fit_these])
+```
+
+## step 4 Data and the model input  
+We already have the data: Data_in.
+
+```{r}
+# Use data for 2000 - 2005
+# created earlier as Data_in
+# define the model_input (optional, as these are the defaults)
+model_input_in <- list(sb = 3, order = c(1,2,3),
+                          sbnames = c("PasoTroncos",
+                          "FrayMarcos",
+                          "PasoPache"))
+```
+
+## step 5 define the objective function
+
+added this (you don't need this explicitly)
+
+```{r}
+DistGR4J_objfun(x = x, 
+      calibrate_on = Fit_these, # which positions of parameters
+      parM = par_in, # all parameters
+      Data = Data_in, # The input data (Q,P,E)
+      model_input = model_input_in, # (opt) rest model input
+      objective = "r.squared", # objective function(optional)
+      weights = c(1,1,1)) # weights (optional)
+
+```
+
+## run optim
+
+```{r}
+Fit_SL <- optim(par = x, # values of the parameters to fit
+        DistGR4J_objfun, # function to fit
+        calibrate_on = Fit_these, # which positions of parameters
+        parM = par_in, # all parameters
+        Data = Data_in, # The input data (Q,P,E)
+        model_input = model_input_in, # (opt) rest model input
+        objective = "r.squared", # objective function(optional)
+        weights = c(1,1.5,2), # weights (optional)
+        method="Nelder-Mead") # options for optim
+
+Fit_SL$par
+```
+
+## Analyse the results
+
+Write the new parameters into the model parameter vectors
+
+Use the rewrite_pars()
+
+```{r}
+# insert fitted values into parameters
+# using rewrite_pars()
+# this creates a list of reach and sub parameters
+new_pars <- rewrite_pars(All_par,All_reach_par,Fit_SL$par)
+str(new_pars)
+```
+
+Now you can rerun the model with the new parameters
+
+```{r}
+Fitted_SL <- GR4JSubBasins.run(sb=3,
+                          order = c(1,2,3),
+                          Data = Data_in,
+                          spar = new_pars$sub,
+                          rpar = new_pars$reach,
+                          sbnames = c("PasoTroncos",
+                          "FrayMarcos",
+                          "PasoPache"))
+
+xyplot(Fitted_SL)
+```
+
+But we want to compare to the observed values. Use utility function plot_results()
+
+```{r}
+# plot using `plot_results()`
+results <- plot_results(Fitted_SL,Data_in)
+```
+
+What are the stats of the fit:
+use stats_fun() another utility function
+
+```{r}
+# using stats_fun on results
+stats_fun(results, decimal=2)
+```
+
+
+
+
+
+
+
+

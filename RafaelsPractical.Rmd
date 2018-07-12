@@ -1,0 +1,295 @@
+---
+title: "Rainfall interpolation"
+author: "Willem Vervoort"
+date: "5 July 2018"
+output: pdf_document
+---
+
+Set working directory path
+```{r}
+wd = "C:/Users/rver4657/ownCloud/Uruguay/CourseMaterial/interpolacion/"
+```
+
+Load packages
+```{r}
+require(maptools)
+```
+
+Load the data
+```{r}
+load(paste(wd,"InterpolacionData.RDATA",sep=""))
+```
+
+Make a plot of the locations of the pluviometers
+
+```{r}
+plot(rg_utm,axes=TRUE,pch=19,col=4)
+plot(subbasins,add=TRUE)
+plot(channels,add=T,col=4,lwd=2)
+plot(streamgauges,add=T,pch=25,bg=7)
+text(coordinates(subbasins)[,1],coordinates(subbasins)[,2],1:3,cex=3)
+```
+
+Give a statistical summary of the data
+
+```{r}
+summary(tab)
+```
+# Verificación de la disponibilidad de datos
+Paso 5. Vea la disponibilidad de estaciones en función del tiempo
+View the number of stations that are operating at any time (subtract number of missing data points from all stations)
+
+```{r}
+na.count = is.na(tab[,2:29])
+na.count.pdt = apply(na.count,1,sum) #datos faltantes en funcion del tiempo
+plot(tab[,1],(28 - na.count.pdt),type="l",xlab="",ylab="Número de estaciones operativas",col=3)
+abline(h=round(mean(28 - na.count.pdt)))
+```
+
+Now rank stations by missing data
+
+```{r}
+na.count.rg = apply(na.count,2,sum) #datos faltantes por estacion
+names(na.count.rg) = rownames(rg_dec)
+p.info.dis = na.count.rg/nrow(tab)*100
+barplot(p.info.dis[order(na.count.rg)])
+thr = 500/nrow(tab)*100 
+abline(h=thr,col=2)
+```
+
+Plot which stations are operating most of the time (less than 500 missing data points)
+```{r}
+# select stations
+rg = names(na.count.rg)[na.count.rg<=500 ]
+# find the coordinates of these stations
+rg.OK = coordinates(rg_utm)[rg,]
+# convert to spatial points
+rg.OK = SpatialPoints(rg.OK, proj4string=utm)
+```
+Now we can plot
+```{r}
+plot(rg_utm,axes=TRUE,pch=1,col=4,cex=1.3)
+plot(subbasins,add=TRUE)
+plot(channels,add=T,col=4,lwd=2)
+plot(streamgauges,add=T,pch=25,bg=7)
+plot(rg.OK,axes=TRUE,pch=19,col=4,add=TRUE,cex=1.2)
+```
+
+Choose day 468 as an example day to do the local kriging, this is a day with very high spatial variability
+
+```{r}
+pdt = 468
+fecha = tab[pdt,"date"]
+    xyz = data.frame(x=coordinates(rg.OK)[,1],y=coordinates(rg.OK)[,2],
+                            z=as.numeric(tab[pdt,rg]))
+    xyz = xyz[!is.na(xyz[,"z"]),]
+    print(paste("el día seleccionado corresponde al:",tab[pdt,"date"]))
+```
+
+# Estimating the variogram
+
+```{r}
+library(gstat)
+```
+ 
+Develop the variogram
+
+```{r}
+   xyz.vgm = variogram(y~1,location = ~x+y,data=xyz)
+        xyz.fit = fit.variogram(xyz.vgm,
+                    model=vgm(psill=1.,model="Lin",range=60000,nugget=0.),
+                fit.sills = TRUE, fit.ranges = FALSE,fit.method = 6)
+plot(xyz.vgm,xyz.fit)
+attr(xyz.fit,"SSErr")
+```
+
+# Krigeado
+load raster
+```{r}
+library(raster)
+```
+
+kriging
+```{r}
+xyz.sp = xyz
+    coordinates(xyz.sp) <- ~x + y
+        crs(xyz.sp) = utm
+        krig_sb = krige(z~1,xyz.sp,newdata=subbasins,model=xyz.fit,nmax=3)  
+```
+We can now visaulise the results
+
+```{r}
+plot(subbasins)
+text(coordinates(xyz)[,1],coordinates(xyz)[,2],xyz$z)
+text(krig_sb$x,krig_sb$y,round(krig_sb$var1.pred,1),cex=2,col=2)
+```
+
+Create a 1x1 km raster and krige to 1x1 km raster
+
+```{r}
+ex = extent(rg_utm)
+r = raster(nrows=100,ncols=150,xmn=ex[1,],xmx=ex[2,],ymn=ex[3,],ymx=ex[4,],crs=utm)
+xy_r = coordinates(r)
+r.spdt = SpatialPoints(xy_r, proj4string=utm)
+krig_r = krige(z~1,xyz.sp,newdata=r.spdt,model=xyz.fit,nmax=3)  
+```
+
+Plot the gridded solution
+
+```{r}
+prec = krig_r$var1.pred
+prec[prec<=0] = 0
+values(r) = prec
+
+rc <- rasterToContour(r, levels=seq(0,100,20))
+plot(r)
+plot(subbasins,add=T,border=2,lwd=2)
+plot(rc,add=T)
+plot(rg_utm,add=T)
+```
+
+# Cómputo de la crónica de precipitación media
+Esta sección tiene por objetivo estimar la crónica de precipitación media, a paso diario, en cada una de las subcuencas y además guardar los resultados de la validación cruzada. (kriging for all days and cross validation)
+
+```{r}
+t1 = Sys.time()
+p_areal = data.frame(fecha=vector(length=0),p1=vector(length=0),p2=vector(length=0),p3=vector(length=0))
+p_val = data.frame(x=vector(length=0),y=vector(length=0),fecha=vector(length=0),
+            sim=vector(length=0),obs=vector(length=0))
+
+anhos = as.numeric(format(tab[,"date"],"%Y"))
+anhos = anhos > 1989 & anhos < 1996
+anhos = (1:nrow(tab))[anhos]
+  
+  
+for(pdt in anhos){
+ 
+fecha = tab[pdt,"date"]
+    xyz = data.frame(x=coordinates(rg.OK)[,1],y=coordinates(rg.OK)[,2],
+                            z=as.numeric(tab[pdt,rg]))
+    xyz = xyz[!is.na(xyz[,"z"]),]
+
+    if(!all(xyz[,"z"]==0)){
+    #variograma
+        xyz.vgm = variogram(y~1,location = ~x+y,data=xyz)
+        xyz.fit = fit.variogram(xyz.vgm,
+                    model=vgm(psill=1.,model="Sph",range=60000,nugget=0.),
+                fit.sills = TRUE, fit.ranges = FALSE,fit.method = 6)
+    #krigeado
+    xyz.sp = xyz
+      coordinates(xyz.sp) <- ~x + y
+        crs(xyz.sp) = utm
+        krig_sb = krige(z~1,xyz.sp,newdata=subbasins,model=xyz.fit,nmax=3)      
+        p_areal = rbind(p_areal, data.frame(fecha=fecha,p1=krig_sb$var1.pred[1],
+                    p2=krig_sb$var1.pred[2],p3=krig_sb$var1.pred[3]))
+
+    #cross-validation
+        krig_cv = krige.cv(z~1,xyz.sp,model=xyz.fit,nmax=5)
+        p_val = rbind(p_val,data.frame(x=coordinates(krig_cv)[,"x"],y=coordinates(krig_cv)[,"y"],
+                    fecha=fecha,sim=krig_cv$var1.pred,obs=krig_cv$observed))
+    }else{
+        p_areal = rbind(p_areal, data.frame(fecha=fecha,p1=0,
+                    p2=0,p3=0))
+    }
+}
+t2 = Sys.time()
+t2-t1
+```
+
+# Validación
+Esta seccion se enfocará en estudiar los resultados de la
+validación cruzada utilizando el sego y el R2 como criterios
+
+Define some functions
+```{r}
+R2.fun <- function(x, y) {summary(lm(y~x))$r.squared}
+bias.fun <- function(x,y){sum(x)/sum(y)}
+```
+
+Calculate the global r2
+```{r}
+coef.r2 = R2.fun(p_val[,"sim"],p_val[,"obs"])
+bias = bias.fun(p_val[,"sim"],p_val[,"obs"])
+round(coef.r2,2)
+```
+
+And the bias
+
+```{r}
+round(bias,2)
+```
+
+Calculate the r2 by station
+
+```{r}
+xy = unique(p_val[,c("x","y")])
+cv.rg = matrix(nrow=0,ncol=4)
+for(i in 1:nrow(xy)){
+    x = xy[i,"x"]
+    y = xy[i,"y"]
+    cond = (p_val[,"x"]==x) & (p_val[,"y"]==y)
+    aux = p_val[cond,]
+    coef.r2 = R2.fun(aux[,"sim"],aux[,"obs"])
+    bias = bias.fun(aux[,"sim"],aux[,"obs"])
+    aux = c(x=x,y=y,coef.r2=coef.r2,bias=bias)
+    cv.rg = rbind(cv.rg,aux)    
+}
+```
+
+Visualisation of r2 by station
+
+```{r}
+plot(subbasins,ylim=range(xy[,"y"]),xlim=range(xy[,"x"]),main="coef.r2")
+text(cv.rg[,"x"],cv.rg[,"y"],round(cv.rg[,"coef.r2"],2))
+```
+
+Paso 17. Visualización del sesgo por estación
+
+bias
+```{r}
+plot(subbasins,ylim=range(xy[,"y"]),xlim=range(xy[,"x"]),main="Sesgo")
+text(cv.rg[,"x"],cv.rg[,"y"],round(cv.rg[,"bias"],2))
+```
+
+## Summarise by Month
+
+```{r}
+library(abind)
+
+meses = 1:12
+
+for(est in 1:nrow(xy)){                     #seleccion por estacion
+    x = xy[est,"x"] 
+    y = xy[est,"y"]
+    cond = (p_val[,"x"]==x) & (p_val[,"y"]==y)
+    aux = p_val[cond,]
+    p_val.mes = as.numeric(format(aux[,"fecha"],"%m"))
+
+    r2.mes = vector(length=0)
+    bias.mes = vector(length=0)
+    n.mes = vector(length=0)
+    for(mm in meses){                       #seleccion por año
+        cond = p_val.mes == mm
+        aux2 = aux[cond,]
+        r2.mes = c(r2.mes,R2.fun(aux2[,"sim"],aux2[,"obs"]))
+        bias.mes = c(bias.mes,sum(aux2[,"sim"])/sum(aux2[,"obs"]))
+        n.mes = c(n.mes,nrow(aux2))
+    }
+    st = cbind(coef.r2=r2.mes,bias=bias.mes,n=n.mes)
+    if(est==1){
+        cv.rg.mes = st
+    }else{
+        cv.rg.mes = abind(cv.rg.mes,st,along=3)
+    }
+}
+```
+
+show r2 by month
+```{r}
+plot(meses,cv.rg.mes[,"coef.r2",1],ylim=c(0,1),ylab="R2",xlab="",type="l",col=8)
+for(i in 2:16){
+lines(meses,cv.rg.mes[,"coef.r2",i],col=8)
+}
+lines(meses,apply(cv.rg.mes[,"coef.r2",],1,mean),lwd=2)
+```
+

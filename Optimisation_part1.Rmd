@@ -1,0 +1,258 @@
+---
+title: "a basic example of optimisation"
+author: "Willem Vervoort"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    number_sections: true
+    toc: true
+    toc_depth: 2
+---
+```{r setup, echo=F, warning=F, message=F}
+# root dir
+knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(lubridate)
+```
+
+# Introduction
+This exercise is aimed at teaching the basics of optimisation using simple regression examples. This will not focus on the the mathematical detail of the optimisation algorithms, which were explained in the theory, but more on the differences in application. A more detailed explanation of the R coding of optimisation algorithms can be found for example [in the book Modern Optimization with R by Paulo Cortez](https://www.amazon.com/Modern-Optimization-R-Use/dp/3319082620).
+Here we will mainly concentrate on what optimisation actually means in practice and how this is affected by objective function and choice of initial parameters.
+
+At the end of this practical the student should be able to:  
+
+- understand how a simple optimisation search routine works;  
+- identify different objective functions and performance statistics;  
+- identify the effect that different objective functions have on the performance and identified parameters.
+
+Throughout the practical there are exercises, which we would like you to try to test your understanding of the material.
+
+# A simple linear regression example
+
+To start we will simply use a linear regression example, so we are fitting a linear straight line through points in the x and y space. You will probably have done this many times in statistics or other courses.
+
+The main principle of linear regression is that the "line of best fit" through the points **minmises the sum squared of residuals (error)**.
+
+Defining this differently, this means that the sum squared of error (SSE) is the **Objective Function**, or: "our objective is to minimise the spread of the residuals around the line in all directions"
+
+$F_{obj} = \min{\sum((y_i - \hat{y})^2)}$
+
+We have probably learned in statistics that this means that:  
+- the residuals are normally distributed with mean 0 and  a standard deviation $\sigma$;  
+- the residuals have constant variance.
+
+### Generate some test data
+
+To demonstrate this all in practice, we will know generate some test data. Here we define the `x` data as part of a random distribution and define a function `y_fun` that uses `x` and two parameters `b0` and `b1` to calculate a straight line with some random error around the line.
+
+```{r test_data}
+require(tidyverse)
+set.seed(20) # set seed to get same data every time
+
+# random data x data linear regression
+x <- rnorm(100)
+# A function y 
+y_fun <- function(x,b0, b1) 
+  {
+  y_out = b0 + b1*x
+  # add random error
+  y_out <- y_out + rnorm(length(x),0,0.5)
+  
+  return(y_out)
+  }
+```
+
+To demonstrate what this does in a plot, we can simply plot x and the output of y_fun on an x-y graph. 
+
+First we will define some exact parameters for b0 and b1
+```{r pars}
+# exact pars
+b0 <- 1
+b1 <- 1.5
+```
+
+
+However we will first merge the x and y as two columns in a data frame called `test_data`.
+
+```{r show_data}
+test_data <- data_frame(x = x, #  x data in a column called x
+                        y = y_fun(x, b0,b1)) # y data from y_fun
+
+# make a plot
+test_data %>%
+  ggplot(aes(x,y)) + geom_point(colour="red", size=2)
+```
+
+Clearly a linear relationship as we would expect.
+
+## exact solution using lm()
+
+Now that we have defined the data we can estimate the parameters. The "correct" statistical approach in R would be to use the function `lm()` and this will give estimates of the parameters b0 and b1.
+
+```{r lm_regression}
+mod <- lm(y~x,test_data)
+summary(mod)
+```
+This shows that the results for the two parameters (intercept and x in the output) are fairly close to the orginal exact parameters, as we would expect.
+
+**Question**:  
+- Why does this work?  
+- What are the assumptions of linear regression?  
+- Can you check the assumptions?
+
+## using brute force, Monte Carlo  
+To demonstrate optimisation, we will first demonstrate how Monte Carlo simulation works and this also allows searching for parameters.
+
+Monte Carlo optimisation involves the following steps:  
+- Define a search range for each of the parameters
+- Randomly sample the range of parameters  
+- Run the model for all parameter combinations and calculate performance statistics.  
+
+Here, I will demonstrate an example for the linear regression data used in the above example. We will use the root means square error and bias as objective functions to test the performance of the model.
+
+```{r MonteCarlo}
+# uniform samples between min and maximum values
+# range of parameters
+b0_range <- runif(200,0,2)
+b1_range <- runif(200,0.5,3)
+
+# define a storage data frame for the results of the objective functions
+Result <- data.frame(bias = rep(0,length(b0_range)),
+                     RMSE = rep(0,length(b0_range)))
+
+# run a loop of 200 (for the 200 samples)
+for (i in 1:length(b0_range)) {
+  # calculate the y values
+  y_pred <- y_fun(b0_range[i], b1_range[i],test_data$x)
+  # Objective functions
+  # calculare the bias between observed and predicted
+  Result$bias[i] <- mean(y_pred - test_data$y)
+  # calculate the rmse for the model
+  Result$RMSE[i] <- sqrt(mean((y_pred - test_data$y)^2))
+}
+
+# plot results
+Result %>%
+  mutate(b0 = b0_range, b1 = b1_range) %>%
+  gather(key = performance, value = value_perf,
+         bias:RMSE) %>%
+    gather(key = "parameter", value = "value_par", b0,b1) %>%
+  ggplot(aes(value_par,value_perf, colour=parameter)) +
+    geom_point() + facet_wrap(~performance, scales = "free") +
+    xlab("Parameter value") + ylab("Performance value")
+
+```
+
+The key lesson out of this is that the RMSE objective function (Root mean square error) offers a clear minimum in relation to the parameters and allows identification of the "best parameter values", which are close to the true values.
+
+There is another way to plot this:  
+- plot b0 versus b1 and colour by RMSE or bias value  
+
+This would be an objective function field, which indicates the location of the minimum in relation to the two parameters.
+
+**Questions**  
+- What would be some of the disadvantages of Monte Carlo optimisation  
+- why is bias not a good "objective function"?  
+- What is the disadvantage of using a random generation of values in the search domain?  
+- Use the internet to understand what "latin hypere cube sampling" means, how would this assist Monte Carlo optimisations  
+
+A further topic in this area would be Monte Carlo Markov Chain optimisation. You can research this yourself if you are interested.
+
+
+## using optim()
+
+As we have learned from the Monte Carlo analysis, it might be useful to have an automated routine that more directly identifies the minimum in the objective function field. The most simple method is called the "hill climbing technique", which essentially looks for the area in the field where the algorithm can identify the fastest improvement in the objective function.
+
+In R, the main tool for optimisation is using the `optim()` function, which has several different approaches to optimisation. We will use the default `Nealder Mead` optimisation, which is essentially a hill climbing technique.
+
+To use `optim()` to find the best solution to the linear regression example, we need to define the objective function to calculate the Root mean square error (RMSE) as a function of the parameters.
+```{r obj_fun}
+# define the sum squared of error as optimisation goal
+obj_fun <- function(par,x,data) {
+  # par is a vector of parameters b0 and b1
+  # x is a vector of input x data
+  # data is the observed data to fit
+  resid <- data-y_fun(par[1],par[2],x)
+  # penalised least squares
+  SSE <- sum((resid)^2)
+  return(SSE)
+}
+
+```
+
+This function calculates the prediction using the input data based on the two parameters and returns the SSE, which is what we want to minimise.
+
+The next step is to use `optim()` to optimise the objective function.
+
+```{r optimise}
+# define some initial guesses for b0 and b1
+par_in <- c(0.9,2)
+
+fit <- optim(par_in, obj_fun, x = test_data$x, 
+             data = test_data$y)
+
+# inspect what is in fit
+str(fit)
+
+# look at the resulting objective function (SSE)
+fit$value
+
+# and at the resulting parameters
+fit$par
+
+# compare this to
+b0; b1
+```
+
+As you can see optim() struggles to find a good solution, particularly for the intercept, simply because the objective function field is fairly flat. As a result the optimisation routine struggles to find an exact solution. 
+
+One way to help this along is to redefine the objective function as a "penalised" objective function in which we multiply the SSE by a large value, which means the differences between the different solutions is exaggerated and thus the objective function field becomes steeper:
+
+```{r obj_fun_penalty}
+# define the sum squared of error as optimisation goal
+obj_fun <- function(par,x,data, penalty) {
+  # par is a vector of parameters b0 and b1
+  # x is a vector of input x data
+  # data is the observed data to fit
+  # penalty is a penalty applied to the SSE
+  resid <- data-y_fun(par[1],par[2],x)
+  # penalised least squares
+  SSE <- penalty*sum((resid)^2)
+  return(SSE)
+}
+
+```
+
+**Question**  
+- apply a "large" penalty (for example penalty = 25) and rerun the optimisation. Do you get a different results.
+- What happens if you choose wildly different initial values?
+
+```{r optimise_pen, eval = T, echo = F}
+# define some initial guesses for b0 and b1
+par_in <- c(0.9,2)
+
+fit <- optim(par_in, obj_fun, x = test_data$x, 
+             data = test_data$y, penalty = 25)
+
+# inspect what is in fit
+str(fit)
+
+# look at the resulting objective function (SSE)
+fit$value
+
+# and at the resulting parameters
+fit$par
+```
+
+The above exercise clearly demonstrates the working of the objective function, the initial values and the model fit.
+
+# Task: apply a different objective function
+
+In the above casae, we have chosen the classic sum squared of error to optimise the function, but does it actually matter what objective function we choose.
+
+**Questions**  
+- As an exercise, to see if you have understood the above activities. Redo the optimisation, but use the *r*^2 as the objective function. You can use the R build in function for correlation (`cor()`) and square this to get *r*^2: `cor(obs,pred)^2`.  
+- Does it make a difference in the optimisation? Why? You might want to also run a Monte Carlo and plot the objective function field.
+
+

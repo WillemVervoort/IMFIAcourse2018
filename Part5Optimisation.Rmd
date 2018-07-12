@@ -1,0 +1,221 @@
+---
+title: "Part5 Validation"
+author: "Willem Vervoort"
+date: "5 July 2018"
+output: pdf_document
+---
+
+Redo calibration of part 3
+
+```{r}
+require(hydromad)
+require(tidyverse)
+# Load the data
+data(Cotter)
+# select a calibration period
+Data_Cal<- window(Cotter, start = "1970-01-01",end = "1975-12-31")
+# Fit a model
+CMod <- hydromad(Data_Cal, sma="gr4j",
+  routing="gr4jrouting",
+  etmult=c(0.05,0.5),
+  x1 = c(100,1500), x2 = c(-30,20),
+  x3 =c(5,500), x4 = c(0.5,10))
+  # use fitByOptim
+CotterFit <- fitByOptim(CMod,
+  objective=~hmadstat("r.squared")(Q,X),
+  samples=1000,method="PORT")
+summary(CotterFit)
+
+```
+
+Set up simulations, create different datasets
+
+```{r}
+# for validation
+Data_Val <- window(Cotter, start = "1976-01-01",end = "1980-12-31")
+# And a full dataset (both validation and calibration)
+Data_All <- window(Cotter, start = "1970-01-01", end = "1980-12-31")
+```
+
+
+Set up a runlist
+
+```{r}
+Cotter_val <- update(CotterFit, newdata = Data_Val)
+Cotter_all <- update(CotterFit, newdata = Data_All)
+# create a runList
+allMods <- runlist(calibration=CotterFit, 
+                   validation = Cotter_val, 
+                   Alldata = Cotter_all)
+```
+
+Get a summary output from the runlist
+
+```{r}
+# gives a statistical overview of the fits
+round(summary(allMods),2)
+```
+
+# Different objective functions
+
+```{r}
+# reset the data to Data_Cal
+CMod <- update(CMod, newdata=Data_Cal)
+# fitByOptim with r.sq.log
+CotterFit_log <- fitByOptim(CMod,
+  objective=hmadstat("r.sq.log"),
+  samples=1000,method="PORT")
+
+# create the validation of r.sq.log
+Cotter_val_log <- update(CotterFit_log, newdata = Data_Val)
+# add to runlist
+allMods <- runlist(calib.rsq = CotterFit, 
+                   valid.rsq = Cotter_val,
+              calib_log = CotterFit_log,
+              valid_log = Cotter_val_log)
+round(summary(allMods),2)
+```
+Make a flow duration curve
+
+```{r}
+# Maybe first write the FDC code as a function
+FDC_gen <- function(DATA, plot.it=T) {
+    n = length(DATA)
+    sort.flow= sort(as.numeric(DATA), decreasing = TRUE,
+      na.last=FALSE)
+    rank.flow <- 1:n
+    Prob <- rank.flow/(n + 1)
+    plot_df <- data_frame(Flow = sort.flow, Prob = Prob*100)
+    # plotting
+    if (plot.it ==T) {
+      p <- plot_df %>%
+      ggplot(aes(Prob,Flow)) + geom_line() +
+      scale_y_log10()+
+      ggtitle("daily flow duration curve") +
+      xlab("Probability") + ylab("log(Flow mm/day)")
+      return(p)
+    } else return(plot_df)
+}
+# test
+FDC_gen(Cotter_val$fitted.values)
+## Warning: Transformation introduced infinite values in continuous y-axis
+FDC_fitted <- FDC_gen(Cotter_val$fitted.values, plot.it=F)
+FDC_fitted$type <- "r.squared"
+```
+
+
+Now add the observed data and the results from the r.sq.log fit
+
+```{r}
+# Create a data_frame with observed values
+plotFDC_df <- FDC_gen(Cotter_val$data$Q, plot.it=F)
+plotFDC_df$type <- "observed"
+# add the fitted values from r.squared fit
+plotFDC_df <- rbind(plotFDC_df, FDC_fitted)
+
+# generate the data frame for the log fit
+FDC_pred_log <- FDC_gen(Cotter_val_log$fitted.values,
+                        plot.it=F)
+FDC_pred_log$type <- "r.sq.log"
+
+# add to the the plot df
+plotFDC_df <- rbind(plotFDC_df, FDC_pred_log)
+# make a plot
+plotFDC_df %>%
+  ggplot(aes(Prob,Flow, colour=type, linetype=type)) +
+  geom_line(size=1.5) + scale_y_log10() +
+  ggtitle("daily flow duration curve") +
+  xlab("Probability") + ylab("log10(Flow mm/day)")
+```
+
+Add the standard objective function (default in hydromad)
+
+```{r}
+#Using this to calibrate gives:
+CotterFit_st <- fitByOptim(CMod,
+  samples=1000,method="PORT")
+
+Cotter_val_st <- update(CotterFit_st, newdata = Data_Val)
+
+allMods <- runlist(calib_rsq = CotterFit,
+                   valid_rsq = Cotter_val,
+                   calib_log = CotterFit_log,
+                   valid_log = Cotter_val_log,
+                   calib_st = CotterFit_st, 
+                   valid_st = Cotter_val_st)
+round(summary(allMods),2)
+```
+
+
+And make the flow duration curves
+
+```{r}
+FDC_pred_st <- FDC_gen(Cotter_val_st$fitted.values,
+                       plot.it=F)
+FDC_pred_st$type <- "standard"
+
+plotFDC_df <- rbind(plotFDC_df, FDC_pred_st)
+
+plotFDC_df %>%
+  ggplot(aes(Prob,Flow, colour=type, linetype=type)) +
+  geom_line(size=2) + scale_y_log10() +
+  ggtitle("daily flow duration curve") +
+  xlab("Probability") + ylab("log10(Flow mm/day)")
+```
+
+Define your own objective function
+
+```{r}
+# use Viney's (includes Bias), see http://hydromad.catchment.org/#hydromad.stats
+hydromad.stats("viney" = function(Q, X, ...) {
+    hmadstat("r.squared")(Q, X, ...) -
+    5*(abs(log(1+hmadstat("rel.bias")(Q,X)))^2.5)})
+# fit again
+CotterFit_Vi <- fitByOptim(CMod,
+                       objective=~hmadstat("viney")(Q,X),
+                       samples=1000,method="PORT")
+
+Cotter_val_Vi <- update(CotterFit_Vi, newdata = Data_Val)
+
+allMods <- runlist(calib_rsq=CotterFit,
+                   valid_rsq=Cotter_val,
+                   calib.log=CotterFit_log , 
+                   valid.log = Cotter_val_log,
+                   calib_st = CotterFit_st, 
+                   valid_st = Cotter_val_st,
+                   calib_Vi = CotterFit_Vi,
+                   valid_Vi = Cotter_val_Vi)
+round(summary(allMods),2)
+```
+
+Show the FDC's again
+
+```{r}
+FDC_pred_Vi <- FDC_gen(Cotter_val_Vi$fitted.values,
+                       plot.it=F)
+FDC_pred_Vi$type <- "Viney's"
+
+plotFDC_df <- rbind(plotFDC_df, FDC_pred_Vi)
+
+# and plot
+plotFDC_df %>%
+  ggplot(aes(Prob,Flow, colour=type, linetype=type)) +
+  geom_line(size=1.5) + scale_y_log10() +
+  ggtitle("daily flow duration curve") +
+  xlab("Probability") + ylab("log10(Flow mm/day)")
+```
+  
+Other way to look at this:
+
+```{r, fig.width=7, fig.height=10}
+xyplot(allMods, scales=list(y=list(log=TRUE)))
+```
+
+
+
+
+
+
+
+
+

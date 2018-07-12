@@ -1,0 +1,211 @@
+---
+title: "Optimisation using maximum likelihood"
+author: "Willem Vervoort"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    number_sections: true
+    toc: true
+    toc_depth: 2
+---
+```{r setup, echo=F, warning=F, message=F}
+# root dir
+knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(lubridate)
+```
+
+# Introduction
+This second exercise in relation to the basics of optimisation focusses on the use of maximum likelihood for optimisation, which relates to Bayesian optimisation. This is just a simple example, but it will demonstrate how Bayesian likelihood can be constructed.
+
+# Maximum likelihood demonstration
+
+We first need an additional package called `bbmle`. If you don't have this installed you probably want to run:
+
+```{r, eval = F}
+install.packages("bbmle")
+```
+
+Then you can run: 
+```{r}
+require("bbmle")
+```
+
+## first example: fitting a normal distribution
+
+This example uses maximum likelihood to fit a normal distribution to some data generated from the distribution and identifies the mean and standard deviation as parameters
+
+We will again use `set.seed()` to make sure that everybody can get the same results, and generate some data
+
+```{r random_set}
+set.seed(1001)
+
+# 100 random samples, mean =3 sd = 2
+N <- 100
+x <- rnorm(N, mean = 3, sd = 2)
+
+mean(x)
+sd(x)
+```
+
+
+The trick is now to write a function that describes the likelihood function to fit the normal distribution. The basic idea in maximising likelihood is that the likelihood is the probability of actually observing the data if you take a sample (do a measurement), assuming a particular model. We want the *maximum likelihood estimates* of the parameters of the model as they are values that make it most likely that the observed data actually happen. Since  observations are independent, the joint likelihood of the whole data set is the product of the likelihoods of each individual observation. 
+$LL = \prod_{i=1}^{n} f(i)$
+
+So, here is how we can implement this in R
+```{r LL_fun}
+LL <- function(mu, sigma) {
+    # define perfect normal distribution
+     R = suppressWarnings(dnorm(x, mu, sigma))
+     # likelihood: minus sum of logged values (one number)
+     -sum(log(R))
+}
+```
+
+The `suppressWarnings()` is not really needed but makes it a bit cleaner to run. Essentially, we are using `dnorm()` which generates the density function based on the mean (mu) and sd (sigma).  
+At the end of the function, we take the logarithm of the probability density values and sum. We then use a negative, so we can "minimise", but in fact maximise.
+
+For the fitting we use the function `mle()` out of the stats4 package.
+
+```{r}
+# use "mle()" to fit
+mle(LL, start = list(mu = 1, sigma=1))
+```
+
+The results indicate that mu and sigma are close, so the maximum likelihood fit works quite well.
+
+## fitting a linear model (a linear regression) 
+
+We can expand the above example to include the fitting of a linear regression model. In this case, what we actually fit is the error distribution, which for a linear model we know needs to be normally distributed and have 0 mean and a fixed standard deviation.
+
+As a start, we will reuse the random model from part 1
+```{r test_data}
+require(tidyverse)
+
+# random data x data linear regression
+x <- rnorm(100)
+# A function y 
+y_fun <- function(x,b0, b1) 
+  {
+  y_out = b0 + b1*x
+  # add random error
+  y_out <- y_out + rnorm(length(x),0,0.5)
+  
+  return(y_out)
+}
+
+b0 = 1
+b1 = 1.5
+
+test_data <- data_frame(x = x, #x data in a column called x
+                        y = y_fun(x, b0,b1)) # y data from y_fun
+
+```
+
+We can test again what the standard linear model solution would be, using `lm()`, as we did in part 1.
+
+```{r lm_regression}
+mod <- lm(y~x,test_data)
+summary(mod)
+```
+
+Again, we find parameter estimates very close to the original b0 and b1.
+
+To show this in a plot, we can just use the `geom_smooth()` function in ggplot.
+
+```{r plot_with_lmline}
+test_data %>%
+  ggplot(aes(x,y)) + geom_point(colour="red", size=3) +
+  geom_smooth(method="lm", formula = y~x)
+
+```
+
+```{r mLL}
+# Now using maximum likelihood:
+LL <- function(beta0, beta1, mu, sigma) {
+  # Find residuals from linear model
+  #
+  R = y_in - x_in * beta1 - beta0
+  #
+  # Calculate the likelihood for the residuals (with mu and sigma as parameters)
+  # These should be normal!!
+  R = suppressWarnings(dnorm(R, mu, sigma))
+  #
+  # Sum the log likelihoods for all of the data points
+  # This is the objective function
+  -sum(log(R))
+}
+
+# There is a problem if you choose values far away from reality
+# But reasonable estimates give reasonable results
+y_in <- test_data$y
+x_in <- test_data$x
+fit <-  mle2(LL, start = list(beta0 = 0.5, beta1 = 3, 
+                            mu=0, sigma=1))
+fit
+summary(fit)
+```
+
+
+This gives slightly different fit, and unless you choose variable close to the true values, your estimates of b0 and b1 will be different, as the model can now also vary the mu and sigma parameters. However, the model now also provides output also gives estimates of the residual distribution! 
+If you focus on this output, you can see that the estimate of mu is not equal to 0 (which it should be for least squares fitting).
+
+You can demonstrate this even more by adding the predicted data to test_data and plotting. This is slightly tricky as there is no easy way to use `predict` on the `fit` object to create a fitted series. So we actually need to use the predicted coefficients.
+```{r plot_LL}
+test_data %>%
+  mutate(LLfit = fit@coef[1] + fit@coef[2]*test_data$x) %>%
+  ggplot(aes(x,y)) + geom_point(colour="red", size=3) +
+  geom_smooth(method="lm", formula = y~x, se = F) +
+  geom_line(aes(x,LLfit), col="green")
+
+```
+
+**Question**  
+- Rerun the LL fit using different estimates for b0 and b1, try estimates far from the "true" b0 and b1, and values close to the "true" b0 and b1.
+
+##  fix mu to 0, to get same as LS
+To actually get the same result as the Least Squares results, we want the mean of the residuals to be 0. By forcing this to be 0, we can achieve the same results as the least squares fit.
+
+```{r fix_mu0}
+fit0 <- mle2(LL, data=test_data, start = list(beta0 = 4, 
+  beta1 = 2, sigma=1), fixed = list(mu=0))
+fit0
+summary(fit0)
+
+```
+
+This gives you similarly an estimate of sigma, which is the same as for the LL fit with mu. Note that the estimate of sigma is exactly the sigma we used to generate the y data in y_fun. 
+
+## Final plot
+We can now make a final plot, using some "gathering" to plot the individual lines.
+
+```{r plot_LL0}
+
+test_data %>%
+  mutate(Lmfit = mod$coefficients[1] + 
+           mod$coefficients[2]*x) %>%
+  mutate(LLfit = fit@coef[1] + fit@coef[2]*x) %>%
+  mutate(LLfit0 = fit0@coef[1] + 
+           fit0@coef[2]*x) %>%
+  gather(key="method", value="values",
+         Lmfit,LLfit, LLfit0) %>%
+  ggplot(aes(x,y)) +
+  geom_point(colour="blue", size=3) +
+  geom_line(aes(x,values, col=method, 
+                linetype=method, size=method)) +
+              scale_size_manual(values=c(1.5,1.5,1))
+```
+
+Finally we can compare the goodness of fit of the different models using the Aikaike information criterium. 
+
+```{r}
+AIC(mod)
+AIC(fit)
+AIC(fit0)
+```
+
+**Question**  
+- Why is the AIC a relevant performance statistic in this case?  
+- What does it mean that the AIC result of the least squares is the same of the LLfit0?
+

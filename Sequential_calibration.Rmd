@@ -1,0 +1,295 @@
+---
+title: "Sequential Calibration of the distributed model"
+author: "Willem Vervoort & Rafael Navas"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    number_sections: true
+    toc: true
+    toc_depth: 2
+---
+```{r setup, echo=F, warning=F, message=F}
+# root dir
+knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(lubridate)
+require(hydromad)
+require(knitr)
+```
+
+# Introduction
+
+Packages needed  
+```{r, eval = FALSE}
+require(tidyverse)
+require(lubridate)
+require(hydromad)
+```
+
+This document gives a rough outline of how you might do sequential multi-objective calibration using the distributed GR4J model. The focus is on the principle, not on the coding of optimisation.
+
+The idea of the sequential optimisation is that you first calibrate ony the parameters for the most upstream subbasin (Subbasin1) , then fix the parameters for this subbasin for the next Subbasin calibration, etc.
+
+# Loading the script, data and model
+
+First load the script with the model.
+
+```{r}
+source("scripts/GR4J@distrv2.R")
+```
+
+This loads six functions in your environment. The first is the actual model function, `GR4JSubBasins.run()`, the other is a specific objective function, `DistGR4J_objfun()`, which can be used with `optim()` to minimise the required internal objective function (such as "r.squared").
+
+Finally there are the function for muskingum routing, `muskingum()`, and three utility functions: 1) to rewrite the parameters, `rewrite_par`; 2) to plot the results, `plot_results()`; and 3) to calculate statistics `stats_fun()`  
+
+
+## The data  
+
+Load the Rdata file that includes all the data and all the parameters for the model.  
+```{r}
+load("data/SL_distdata.RDATA")
+```
+
+
+Select a window of the data, because it is a zoo data frame, we can use `window()` on the data.
+```{r define_data_window}
+# Use data for 2000 - 2005
+Data_in <- window(SL_distdata,
+                       start = "2000-01-01",
+                       end ="2005-12-31")
+```
+
+## Optimisation of the model
+
+To optimise the model, we need to use `optim()`, as the model is not fully integrated in hydromad. So this simply follows the linear regression optimisation example.
+
+This means we need to give initial guesses of the parameters and construct the model input as a list
+
+# Subbasin 1
+
+## Create the input for the optimisation function
+
+### step 1  
+Define the initial guesses of the parameters to optimise
+This is the vector x in model optimisation. In this case we only want to fit the GR4J parameter for the first Subbasin
+
+You can just type numbers, but I am using parts of the existing lists to create the vector. They have to be in the right order.
+
+```{r Define_initial_guess}
+# initial guesses, using the SubX.par in All_par. and
+# reachX.par in All_reach_par, where X is a number
+x <- c(All_par$Sub1.par[2:5])
+```
+
+### step 2  
+
+Create the vector for par_in, which is all the parameters in the model, again using the parameter lists that we loaded. We can reuse this for Subbasin 2 and 3
+
+```{r Define_all_pars}
+# all the parameters of the model
+par_in <- c(All_par$Sub1.par[1:5], All_par$Sub2.par[1:5],
+  All_par$Sub3.par[1:5], All_reach_par$reach1.par,
+  All_reach_par$reach2.par)
+```
+
+### step 3  
+Identify which positions in par_in relate to x, so which parameters in the whole series in par_in are actually calibrated. 
+
+```{r define_Fit_theseS1}
+# define which parameters to calibrate
+# We want to
+Fit_these <- c(2:5) 
+```
+
+
+### step 4  
+Finally, we need to construct a list which defines the remaining model input
+We can reuse this for S2 and S3
+
+```{r define_rest_model}
+# Use data for 2000 - 2005
+# created earlier as Data_in
+# define the model_input (optional, as these are the defaults)
+model_input_in <- list(sb = 3, order = c(1,2,3),
+                        sbnames = c("PasoTroncos",
+                        "FrayMarcos",
+                        "PasoPache"))
+```
+
+## fit the model using optim()
+Now you can run the objective function using optim(). The key here is definition of the weights.
+
+```{r fit_model_optim}
+Fit_SL <- optim(par = x, # values of the parameters to fit
+    DistGR4J_objfun, # function to fit
+    calibrate_on = Fit_these, # which positions of parameters
+    parM = par_in, # all parameters
+    Data = Data_in, # The input data (Q,P,E)
+    model_input = model_input_in, # (opt) rest model input
+      objective = "r.squared", # objective function(optional)
+    weights = c(1,0,0)) # weights
+
+Fit_SL$par
+Fit_SL$value
+```
+
+# Subbasin2
+
+We now want to fix the parameters for subbasin 1 and use this to calibrate the parameters in subbasin 2 and the routing of reach 1.
+
+First we need to rewrite the parameters, I had to rewrite the function
+
+```{r _rewrite_parsS2}
+# insert fitted values into parameters
+# using rewrite_pars() Note the change in definition
+# this creates a list of reach and sub parameters
+new_pars <- rewrite_pars(All_par,changed_par = Fit_SL$par,
+                         sb = 1, which = 1)
+```
+
+## Create the input for the optimisation function
+
+### step 1  
+Define the initial guesses of the parameters to optimise
+This is the vector x in model optimisation
+
+```{r Define_initial_guessS2}
+# only subbasin 2 and reach 1
+x <- c(All_par$Sub2.par[2:5], All_reach_par$reach1.par)
+```
+
+skipping step 2
+
+### step 3  
+Identify which positions in par_in relate to x, so which parameters in the whole series in par_in are actually calibrated. Only subbasin 2 and reach 1
+
+```{r define_Fit_theseS2}
+# define which parameters to calibrate
+# We want to
+Fit_these <- c(7:10,16,17) 
+```
+
+skipping step 4
+
+## fit the model using optim()
+Now you can run the objective function using optim(), change weights
+
+```{r fit_model_optimS2}
+Fit_SL <- optim(par = x, # values of the parameters to fit
+    DistGR4J_objfun, # function to fit
+    calibrate_on = Fit_these, # which positions of parameters
+    parM = par_in, # all parameters
+    Data = Data_in, # The input data (Q,P,E)
+    model_input = model_input_in, # (opt) rest model input
+      objective = "r.squared", # objective function(optional)
+    weights = c(0,1,0)) # weights 
+
+Fit_SL$par
+Fit_SL$value
+```
+
+# Subbasin3
+
+We now want to fix the parameters for subbasin 1 & 2 and use this to calibrate the parameters in subbasin 3 and the routing of reach 2.
+
+First rewrite the parameters
+
+```{r _rewrite_parsS3}
+# insert fitted values into parameters
+# using rewrite_pars()
+new_pars <- rewrite_pars(All_par,All_reach_par,
+                         changed_par = Fit_SL$par,
+                         sb = 2, which = 2)
+```
+
+## Create the input for the optimisation function
+
+### step 1  
+Define the initial guesses of the parameters to optimise
+This is the vector x in model optimisation
+
+```{r Define_initial_guessS3}
+# only subbasin 2 and reach 1
+x <- c(All_par$Sub3.par[2:5], All_reach_par$reach2.par)
+```
+
+skipping step 2
+
+### step 3  
+Identify which positions in par_in relate to x, so which parameters in the whole series in par_in are actually calibrated. Only subbasin 2 and reach 1
+
+```{r define_Fit_theseS3}
+# define which parameters to calibrate
+# We want to
+Fit_these <- c(12:15,18,19) 
+```
+
+skipping step 4
+
+## fit the model using optim()
+Now you can run the objective function using optim(), change weights
+
+```{r fit_model_optimS3}
+Fit_SL <- optim(par = x, # values of the parameters to fit
+    DistGR4J_objfun, # function to fit
+    calibrate_on = Fit_these, # which positions of parameters
+    parM = par_in, # all parameters
+    Data = Data_in, # The input data (Q,P,E)
+    model_input = model_input_in, # (opt) rest model input
+      objective = "r.squared", # objective function(optional)
+    weights = c(0,0,1)) # weights 
+
+Fit_SL$par
+Fit_SL$value
+```
+
+# Calculating overall performance
+
+### step 1  
+Insert parameters back into the model, we can do this easier using the utility function `rewrite_pars()`, which takes as inputs the old parameters and the new fitted parameters.
+
+```{r _rewrite_pars}
+# insert fitted values into parameters
+# using rewrite_pars()
+# this creates a list of reach and sub parameters
+new_pars <- rewrite_pars(All_par,All_reach_par,
+                         changed_par = Fit_SL$par,
+                         sb = 1, which = 3)
+```
+
+### step 2  
+We can now rerun the model with the new parameters, which means we make a prediction. In this case we repredict the data, but you could use the same function to predict new data for a validation.
+
+```{r predict_model}
+Fitted_SL <- GR4JSubBasins.run(sb=3,
+                          order = c(1,2,3),
+                          Data = Data_in,
+                          spar = new_pars$sub,
+                          rpar = new_pars$reach,
+                          sbnames = c("PasoTroncos",
+                                      "FrayMarcos",
+                                      "PasoPache"))
+
+xyplot(Fitted_SL)
+```
+
+This plot is just the predicted values, we want to know how well it predicts the observed values. For this we want to make a plot and calculate some statistics to show how good the fit is.
+
+
+### step 3  
+I am here using ggplot and create a dataframe that includes both the fitted and the observed data for each subcatchment. We can make this plot easily using the utility `plot_results()` function. The output of this function is a data frame with the observed and fitted results.  
+```{r plot_fitted_obs}
+# plot using `plot_results()`
+results <- plot_results(Fitted_SL,Data_in)
+# this creates a data frame with observed and fitted Q
+```
+
+### step 4  
+We can now calculate the statistics using the output of the last function, and the utility function `stats_fun()`
+
+```{r calculate_stats}
+# using stats_fun on results
+stats_fun(results, decimal=2)
+
+```

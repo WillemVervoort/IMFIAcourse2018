@@ -1,0 +1,358 @@
+---
+title: "Using Satellite calibration with GR4J"
+author: "Willem Vervoort and Rafaël Navas"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    number_sections: true
+    toc: true
+    toc_depth: 2
+---
+```{r setup, echo=F, warning=F, message=F}
+# root dir
+knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(lubridate)
+require(hydromad)
+require(knitr)
+```
+
+# Introduction
+
+## Bulk downloading satellite data using scripts  
+Bulk Downloading satellite data remains tricky. Recently the typical "DAAC" sites have implemented a much stricter control on the downloads, [which now require a Earthdata login and password](https://lpdaac.usgs.gov/). As a result many of the older tools and R packages are currently not working. Because the changeover to more secure downloads is also a work in progress, it means that it is currently difficult to demonstrate how you use a script to bulk download data. 
+
+Luckily, I still had data from last year for Santa Lucia, and we will use this data for this exercise. This data was downloaded with the R package MODIStools and is MODIS16A, collection 5. The package MODIStools is now maintained by ORNLDAAC and can be found [here](https://modis.ornl.gov/data/modis_webservice_soap.html). It allows extracting point data, but not whole images. Due to the time restrictions, I have not downloaded the data again.
+
+## Satellite data is not directly useable   
+Satellite data downloaded from typical sites is not directly useable in hydrological models. Here we use the example of MODIS data and take you through all the necessary steps to make this data easily useable in a Hydomad (GR4J) model. 
+
+This has been developed by Willem and Joseph Guillaume over the last few years, and is also a *work in progress*.
+
+## Aims of this practical:  
+
+*	Perform analysis of the downloaded satellite data  
+*	Develop and calibrate a GR4J model for the Cotter catchment in combination with local station data and satellite data  
+*	Test how different data input can affect model performance  
+
+# Section 1 visualising satellite data using MODIStools
+
+## packages needed
+```{r, eval = F}
+require(tidyverse)
+require(lubridate)
+```
+
+
+## steps in Section 1  
+
+* (download the data) **Not done**
+* Load the data in R
+* Extract variable, clip and visualise
+* Extract data for pixels or grid cells
+* Prepare timeseries
+
+Only after all that can we try to use it in a model to calibrate in Section 2, so here we go!
+
+## Convert to timeseries  
+We need to read the downloaded MODIS ET data and create a time-series zoo data frame format. For this we will create a function to read MODIS data and convert it to the required format. 
+
+This function will go to the directory we specify and find all the files that have the extension ".asc". (Or any other extension that you specify). In class we will have a look at what these files look like.
+
+In the below function, take a good look at the naming of the columns in `Store`, as we will be using this later.  
+
+There is one little important thing. This [**table**](https://lpdaac.usgs.gov/dataset_discovery/modis/modis_products_table/mod16a2_v006) gives the units and scaling factor. From this:  
+
+- MODIS has a 0.1 scaling factor  
+- NA values (Datos faltantes) can be 32765, or another large number
+
+The below function does five major steps:  
+
+- step 1: read in the names of the files in the directory.  
+- step 2: find the number of rows (number of dates!) in the first file and use this to build a storage data frame for the data from each file.  
+- step 3: create a "master" storage list, that stores all the data from each location.  
+- step 4: read each file and store specific columns in Store, and then put Store into Store1.  
+- step 5: combine the data in Store1, and convert to timeseries data for output.  
+
+
+```{r MODISts}
+MODIS_ts <- function(MODISdir="MODIS",
+                     patt=".asc"){
+  
+  # step 1: read in all the file names
+   x1 <- list.files(path=MODISdir, pattern=patt)
+  
+  # step 2: rows and storage
+  # each "asc" file stores all the values in time for 1 location
+ # the number of rows is important as this is all the time steps
+   # check the number of rows in the file
+    n <- nrow(read.csv(paste(MODISdir,x1[1],sep="/"),header=F,
+                       na.strings=32765))
+    # use this information to:
+    # Create storage for the data, Jdate is Julian date
+    Store <- data.frame(Year = numeric(length=n),
+                        Jdate = numeric(length=n),
+                        ET = numeric(length=n),
+                        Point = numeric(length = n))
+    
+    # Create an empty list to store the different pixels 
+    # (each with a data frame called Store)
+    # step 3: create a "master" storage list
+    Store1 <- list()
+    # Step 4: run a loop over the list of file names
+    for (i in 1:length(x1)) {
+      Mdata <- read.csv(paste(MODISdir,x1[i],sep="/"),header=F,
+                        na=32765)
+      # do some substringing
+      Store[,1] <- as.numeric(substr(Mdata[1:n,8],2,5))
+      Store[,2] <- as.numeric(substr(Mdata[1:n,8],6,8))
+      Store[,3] <- Mdata[1:n,11]*0.1
+      Store[,4] <- i
+      Store1[[i]] <- Store
+
+    }
+    # step 5: converting from list back to a data.frame
+    ts.data <- do.call(rbind,Store1) 
+    # Now make the date from the Year and Jdate
+    ts.data$Date <- as.Date(paste(ts.data$Year,ts.data$Jdate, 
+                                  sep = "/"), "%Y/%j")
+    
+    return(ts.data)
+}
+
+# and we can run this function and check the data
+SL_ET <- 
+  MODIS_ts(MODISdir = "Data/Modis")
+# Chk the data
+head(SL_ET)
+
+```
+
+So this extract for 31 data points the full time series over 14 years, but note that we only have data every 8 days. The column with Julian dates (Jdate) indicates this. As we discussed, MODIS16A2 only supplies data every 8 days even though it is measured more frequently.
+
+## Visualise the data  
+We now want to visualize the 8 daily ET over two years. This is now quite straight forward, recognising thet the column Point indicates the different gird cells/pixels. Adjust colours to show this.
+
+```{r plot_ts,fig.cap="Figure 1 Timeseries of ET at the first five points"}
+SL_ET %>%
+  filter(Point>= 10 & Point < 16) %>%
+  filter(Year >= 2010 & Year < 2012) %>%
+  ggplot(aes(Date,ET, colour=as.factor(Point))) +
+               geom_point(size=2) +  
+     xlab("8-day time series") + ylab("8-day ET in mm") +
+       ylim(c(0,50))
+```
+
+Clearly something odd is happening between the years. I am not sure if this is real or if this is related to the data merging from year to year. Remember these are actual ET measurements and not potential ET.  
+
+We probably also need to remove all the 0 values, they might be related to cloudy days.  
+
+We could also make a simple histogram across all the points extracted.  
+```{r plot_hist,fig.cap="Figure 2 Histogram of MODIS ET across the different points"}
+SL_ET %>%
+  ggplot(aes(ET)) + geom_histogram(fill="blue") +
+        xlab("MODIS ET 8 day cumulative values")
+```
+
+Let's filter out the 0 values
+
+```{r}
+SL_ET_no0 <- SL_ET %>%
+  filter(ET > 0)
+```
+
+## Aggregating to mean ET for the catchment  
+Because we are going to use a lumped model (modelo aggregado) we need to aggregate the ET data and obtain the average ET for the entire catchment. We will use the function `summarise()` again and also calculate the standard deviation.
+
+```{r ETmean, fig.cap="Figure 3 Average ET across the catchment"}
+SL_ET_mean <- SL_ET_no0 %>%
+  group_by(Year,Jdate) %>%
+  summarise(meanET = mean(ET, na.rm = T),
+            sdET = sd(ET, na.rm = T))
+# Check the data
+SL_ET_mean
+```
+
+We now want to add the real dates again and plot.
+
+```{r dateconvert}
+SL_ET_mean <- SL_ET_mean %>%
+  mutate(Date = ymd(paste(Year,"01-01",sep="-")) +
+           Jdate) 
+# Now, make a plot of the mean 8 daily ET 
+SL_ET_mean %>%
+  ggplot(aes(Date, meanET)) + 
+  geom_line(colour="blue", size=1.2) +
+  xlab("Time (8-daily)") + ylab("Basin average ET")
+```
+
+Still some odd things happening between years. It is not clear what this means, but we will ignore this for now.
+
+We can also plot the Sd and mean in two panels
+
+```{r}
+SL_ET_mean %>%
+  gather(key = "variable", value="value", meanET, sdET) %>%
+  ggplot(aes(Date, value, colour=variable)) + 
+  geom_line(size=1.2) + 
+  facet_wrap(~variable) +
+  xlab("Time (8-daily)") + ylab("Basin average and sd ET")
+
+```
+
+This clearly shows that the variation between locations is greater in the summer than in the winter. Can you think why?
+
+**Questions**  
+- In developing the average Catchment ET we made a few assumptions, which are particularly important if we want to use this in hydrological modelling. What are these?  
+*Hint* Think distributed model versus lumped model.
+
+# Section 2: A GR4J model with Satellite ET data
+
+This section calibrates a GR4J model using both streamflow and MODIS ET satellite data using some functions developed by Joseph Guillaume and Willem Vervoort.
+
+## packages and data needed
+```{r}
+require(hydromad)
+```
+
+We will use the PasoPache data from the assessment task
+
+```{r loaddata}
+load("data/PasoPache.Rdata")
+```
+
+## Converting the satellite data to zoo
+
+To be able to use the satellite data with hydromad, we have to create a zoo object.
+```{r convertToZoo}
+# Converting to a zoo format to work with hydromad
+SL_MODISET <- zoo(SL_ET_mean$meanET, order.by=SL_ET_mean$Date)
+```
+
+## Define and calibrate GR4J
+We will again use the "GR4J" model in hydromad package. The approach will be similar to day 2 but we will also test calibration with satellite derived ET. This basically repeats some of the analysis Vervoort et al (2014) did with IHACRES. 
+To make things easier, Joseph Guillaume and I have written a series of functions in R to help do this in hydromad. These will be incorporated in hydromad in the future, but at the moment, it just exists as separate files. Load these first using `source()`, and they are stored in the "scripts' folder on dropbox.
+
+```{r sourceFun}
+source("scripts/leapfun.R")
+source("scripts/ETa.merge.R")
+source("scripts/plot.ET.R")
+source("scripts/ETfit.objectives.R")
+
+```
+
+Then we need to load the data and merge this with the ET data. The `ETa.merge()` function needs to be used rather than the classical `zoo.merge()` because the MODIS ETa data is only every 8 days and this needs to be merged with the daily flow, rainfall and maxT data.
+
+```{r dataLoad_merge, fig.cap="Figure 5: Merged dataset for the Santa Lucia Catchment"}
+
+# discard the data before 2000
+PP_data <- window(PasoPache, start="2000-01-01")
+
+PP_Sat <- ETa.merge(Flowdata=PP_data,ETdata=SL_MODISET)
+# Make a plot
+xyplot(PP_Sat)
+```
+
+## Calibrating GR4J
+Now we will first setup and calibrate the model with station data and then we will calibrate the same model in combination with the satellite ET data. This will enable us to see how model estimation is influenced by adding the extra observable evaporation flux. 
+
+We will need to subset the data for the calibration period and load it into model.   First, we will run the model without the satellite ET data. 
+
+```{r GR4Jcalibration, fig.cap="Figure 6: GR4J model fitted with local station data"}
+# Data period for calibration
+data_cal <- window(PP_data, start = "2000-01-01",end = "2005-12-31")
+
+# Data for validation period
+data_val <- window(PP_data, start = "2006-01-01",end = "2010-12-31")
+
+# Define the model, important to define return_state=T
+# seeting etmult = 1, as the data is potential ET
+SL_mod <- hydromad(DATA=data_cal,
+                   sma = "gr4j", routing = "gr4jrouting", 
+                   x1 = c(100,1000), x2 = c(-10,5), 
+                   x3 = c(1,300), 
+                   x4 = c(0.5,10), etmult=1, 
+                   return_state=TRUE)
+
+# Using shuffled complex evolution algorithm for fitting
+SL_fit<- fitBySCE(SL_mod,  
+                     objective= hmadstat("r.squared"))
+
+# Extract the coefficients and the summary
+summary(SL_fit)
+# plot
+xyplot(SL_fit, with.P = TRUE)
+```
+
+## Recalibrate with MODIS ET data
+Now calibrate the model with the satellite ET data. This requires a few little tricks, one of these is the use a specific objective function which combines the Eta and the Q function. There is a "weighting" factor in this function, which we initially will just set to 0.5 (equal weighting between ETa and Q).
+
+```{r CalibrationEta, fig.cap="Figure 7: GR4J Model fitted with local station and Satellite ET data"}
+# remake the calibration data
+data_modis_cal <- window(PP_Sat, start = "2000-01-01",end = "2005-12-31")
+
+# also make the validation data
+data_modis_val <- window(PP_Sat, start = "2006-01-01",end = "2010-12-31")
+
+# Because we have rebuilt data.cal, redefine the model
+SL_mod_Modis <- hydromad(DATA=data_modis_cal,
+                   sma = "gr4j", routing = "gr4jrouting", 
+                   x1 = c(100,1000), x2 = c(-10,5), 
+                   x3 = c(1,300), x4 = c(0.5,10), 
+                   etmult=1, 
+                   return_state=TRUE)
+
+
+# fit both ET and Q using special objective function
+SL_Fit_Modis <- fitBySCE(SL_mod_Modis,
+            objective=~hmadstat("JointQandET")(Q,X,w=0.5,
+            DATA=DATA,model=model,objf = hmadstat("r.squared")))
+
+# check the model fit
+summary(SL_Fit_Modis)
+## 
+# Plotting the results
+xyplot(SL_Fit_Modis, with.P = TRUE)
+```
+
+We can now also look at how it predicts actual ET and how this compares to the observed ET. Use the `plot.ET()` function.  
+
+```{r plotET, fig.cap="Figure 8: Plot showing observed vs predicted actual ET"}
+plot.ET(caldata=data_modis_cal,SL_Fit_Modis)
+```
+
+## Model comparison
+We can now compare the model performance and whether this has changed for the two calibration methods.  
+
+```{r ModelPerformance}
+coef(SL_fit)
+coef(SL_Fit_Modis)
+objFunVal(SL_fit)
+objFunVal(SL_Fit_Modis)
+```
+
+And then do the same for validation and make a runlist.  
+
+```{r ValPerformance}
+# updating the model data for the validation
+SL_val <- update(SL_fit, newdata = data_val)
+SL_val_modis <- update(SL_Fit_Modis, newdata = data_modis_val)
+
+# runlist
+allMods <- runlist(calibration=SL_fit, validation=SL_val,
+                   calibrationET=SL_Fit_Modis, 
+                   validationET= SL_val_modis)
+
+# Get the summary results
+round(summary(allMods),2)
+```
+
+**Questions**
+Comment on the model performance:  
+
+* Does fitting on ET help? 
+* What other comparisons could we make to test the behaviour?
+* Can we improve the model performance?
+
+(You can also check relevant published papers where ET is used for model calibration)

@@ -1,0 +1,363 @@
+---
+title: 'Optimisation part 5: Objective functions and validation'
+author: "Willem Vervoort"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    number_sections: true
+    toc: true
+    toc_depth: 2
+---
+```{r setup, echo=F, warning=F, message=F}
+# root dir
+knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(lubridate)
+require(knitr)
+```
+
+# Introduction
+
+This session expands the knowledge we gained in earlier practical activities to look at validation and different objective functions
+
+## Checking the model results: Validation  
+A very important part of the modelling process is to provide an independent check of your model performance. Papers such as Oreskes et al. (1994) that highlight that the term validation is maybe not the best term to use. However, it is still very common in the hydrological literature and profession, so I will stick with it.
+
+## Aims of this practical session:
+
+* Consider how you validate (Evaluate) your model and compare validation and calibration  
+* Learn how to calibrate your model with different objective functions and how this affects the model performance  
+ 
+We will start with quickly redoing the model calibration from part 3.
+
+```{r CreateModel, message=F, warning=F}
+require(hydromad)
+# Load the data
+data(Cotter)
+# select a calibration period
+Data_Cal<- window(Cotter, start = "1970-01-01",end = "1975-12-31")
+# Fit a model
+CMod <- hydromad(Data_Cal, sma="gr4j",
+                 routing="gr4jrouting",
+                 etmult=c(0.05,0.5),
+                 x1 = c(100,1500), x2 = c(-30,20),
+                 x3 =c(5,500), x4 = c(0.5,10))
+# use fitByOptim
+CotterFit <- fitByOptim(CMod,
+  objective=~hmadstat("r.squared")(Q,X),
+  samples=1000,method="PORT")
+summary(CotterFit)
+```
+
+
+## Simulations  
+Simulations are basically the predictions of a model, either back to same time period, or for new time periods suing the calibrated model.
+
+Essentially, to further check how good the model works, we need to check the model predictions against independent flow data.
+
+First we will create the different datasets.
+```{r newdata}
+# for validation
+Data_Val <- window(Cotter, start = "1976-01-01",end = "1980-12-31")
+# And a full dataset (both validation and calibration)
+Data_All <- window(Cotter, start = "1970-01-01", end = "1980-12-31")
+```
+
+You can of course make many more data sets to test the model and get an insight in model stationarity by running different calibrations and validations over time and comparing the parameters and the performance.
+
+## combining the models with new data
+
+To efficiently compare the results of the different models, we will make use of the handy function `runlist()` in hydromad. This allows you to put a whole lot of simulations together.  
+
+The method `update` on the fitted hydromad object  actually executes the fitted model with the new data for further output. 
+
+```{r}
+Cotter_val <- update(CotterFit, newdata = Data_Val)
+Cotter_all <- update(CotterFit, newdata = Data_All)
+
+# create a runList
+allMods <- runlist(calibration=CotterFit, Cotter_val, Cotter_all)
+
+```
+
+To get an overview of the statistics for different models, we simply use summary. Adding `round()` makes the table more readable.
+
+```{r}
+# gives a statistical overview of the fits
+round(summary(allMods),2)
+```
+
+As you can see the validation (or the years 1976 - 1980) performance is not too bad but lower than the calibration period , with an NSE score of only `r round(summary(allMods),2)[2,2]` and the greatest bias `r round(summary(allMods),2)[2,1]`.   
+In contrast the overall period gives a relatively better fit, which is logical as this includes the calibration data.  
+These results might be different from catchment to catchment and period to period, depending on which catchment you intend to study.   
+
+**Question**  
+- What happens if you calibrate for 1990 - 1996 and validate from 1997 - 2001?  
+- **HOMEWORK**: What are the validation statistics for the PasoRoldan catchment?  
+
+## Choice of the validation period and calibration period
+
+As the above exercise shows, calibration and validation is partly dependent on the time period that is chosen. This is called non-stationarity, and this a major topic in hydrological modelling (Ajami et al. 2017; Dutta et al. 2015). For example there is a major difference between dry and wet periods in calibration in Australia (Saft et al. 2015). There is no sensible way to define a choice of validation and calibration periods and no true guidelines exist. 
+
+Probably the best way is to analyse the data and choose relevant periods (if possible):  
+- which are long enough (at least 5 years)  
+- have variability that is similar to the overall data  
+
+Then the next step is to:  
+- calibrate on period 1, validate on period 2.  
+- calibrate on period 2, validate on period 1.  
+- compare the statistics and the parameters and link this to differences in climate characteristics in the periods.  
+
+In this way, we can understand what the "average" behaviour is and understand if the differences in climate characteristics are a cause of the differences in the calibration and validation.
+
+Sometimes you have a shorter timeseries and cannot provide to longer calibration and validation periods. A common approach for this is a *leave-one-out cross validation*. This involves leaving one year out of the data, calibrating on the remaining years, and repeating this until you used all years. This can also be done for a long series.
+
+Here is a short example for a leave-one-out cross validation using the CMod model and the 1970 - 1975 data series (6 years).
+
+The steps taken are:  
+1. Develop a storage to store the model calibration performance or *Goodness of fit* for calibration
+```{r}
+Performance <- data_frame(bias = rep(0,6),
+                          r.squared = rep(0,6),
+                          r.sq.sqrt = rep(0,6),
+                          r.sq.log = rep(0,6))
+```
+  
+2. Develop a storage to store the model predictions for the 1 prediction year × 6 and the observed values for those years. We already know what the observed values are (the data series Q from Data_Cal).   
+```{r}
+Validation_pred <- 
+  data_frame(observed = Data_Cal$Q, 
+             predicted = rep(0,nrow(Data_Cal)))
+```
+  
+3. Run the model in a loop, leaving one year out, calibrating, predicting the missing year and storing results.  
+```{r}
+# define begin and end dates of leave-one-out
+pred_window <- cbind(c("1970-01-01","1971-01-01",
+                       "1972-01-01","1973-01-01",
+                       "1974-01-01"),
+                     c("1971-01-01","1972-01-01",
+                       "1973-01-01","1974-01-01",
+                       "1975-01-01"))
+ 
+# loop over years
+for (i in 1:nrow(pred_window)) {
+  # define the calibration and prediction data
+  Data_pred <- window(Data_Cal,
+                      start = pred_window[i,1],
+                      end = pred_window[i,2])
+  # remove Data_pred rows from calibration period
+  "%w/o%" <- function(x, y) x[!x %in% y]
+  Data_Cal2 <- Data_Cal[index(Data_Cal) 
+                        %w/o% index(Data_pred),]
+  # update CMod
+  CMod <- update(CMod, newdata = Data_Cal2)
+  # fit
+  FitModel <- fitByOptim(CMod, 
+            objective =hmadstat("r.squared"),
+            samples=1000,method="PORT")
+  # extract the performance and store
+  Performance[i,] <-
+    as.numeric(summary(FitModel)[7:10])
+  # make prediction
+  pred_mod <- update(FitModel, newdata = Data_pred)
+  predicted <- predict(pred_mod)
+  # extract fitted values and store
+  # set start value for storage
+  if (i == 1) first <- 0
+  Validation_pred[(first+1):(length(predicted)+first),2] <-
+                    predicted
+  
+  first <- length(predicted)
+}
+```
+For a real calibration run, we would also save the parameters, but with the example how to save the performance, it should be easy to write this yourself for the parameters.  
+
+We can now calculate the performance statistics of the observed versus the predicted for all the periods using Validation_pred and also calculate the average performance of the calibration.  
+```{r}
+Overall_perf <- apply(Performance,2,mean)
+Overall_perf
+
+# validation
+(bias <- hmadstat("rel.bias")(Q = Validation_pred$observed,
+  X = Validation_pred$predicted))
+(NSE <- hmadstat("r.squared")(Q = Validation_pred$observed,
+  X = Validation_pred$predicted))
+(r.sq.sqrt <- hmadstat("r.sq.sqrt")(Q = Validation_pred$observed,
+  X = Validation_pred$predicted))
+(r.sq.log <- hmadstat("r.sq.log")(Q = Validation_pred$observed,
+  X = Validation_pred$predicted))
+```
+
+This clearly shows very poor validation performance, as well as much poorer calibration performance.
+
+**Question**  
+- What could be the reason of this much lower performance?  
+- Discuss whether you think leave-one-out cross validation is a stronger or a weaker test than the overall calibration and validation?  
+
+# Different objective functions
+
+We chose to use the NSE as in `r.squared` as the objective function. How does this change if we choose a different objective function?
+
+The first one to try is a function that focusses more on the low flow (`r.sq.log`). Taking some short cuts we can quickly generate
+
+```{r refit_log}
+CMod <- update(CMod, newdata=Data_Cal)
+CotterFit_log <- fitByOptim(CMod,
+                   objective=hmadstat("r.sq.log"),
+                        samples=1000,method="PORT")
+Cotter_val_log <- update(CotterFit_log, newdata = Data_Val)
+
+allMods <- runlist(calib.rsq = CotterFit, Cotter_val, 
+                   calib_log = CotterFit_log,
+                   Cotter_val_log)
+
+round(summary(allMods),2)
+```
+
+The flow duration curve (or flood frequency curve) is a good way to check the results as it quickly highlights deficiencies in the different flow quantiles.  
+
+We can easily write a function that creates a flow duration curve  
+
+```{r FDC_function, fig.width=4.5, fig.heigt=4.5, fig.cap="Example flow duration curve Cotter"}
+# Maybe first write the FDC code as a function
+FDC_gen <- function(DATA, plot.it=T) {
+#browser()
+  n = length(DATA)
+  sort.flow= sort(as.numeric(DATA), decreasing = TRUE,
+                na.last=FALSE)
+  rank.flow <- 1:n
+  Prob <- rank.flow/(n + 1)
+  plot_df <- data_frame(Flow = sort.flow, Prob = Prob*100)
+  # plotting
+  if (plot.it ==T) {
+  p <-   plot_df %>%
+      ggplot(aes(Prob,Flow)) + geom_line() +
+             scale_y_log10()+ 
+             ggtitle("daily flow duration curve") +
+      xlab("Probability") + ylab("log(Flow mm/day)")
+  return(p)
+  } else return(plot_df)
+}
+
+# test
+FDC_gen(Cotter_val$fitted.values)
+FDC_fitted <- FDC_gen(Cotter_val$fitted.values, plot.it=F)
+FDC_fitted$type <- "r.squared"
+```
+
+Using this function we can plot the results of the different objective functions using a Flow duration curve. 
+
+```{r FDC_plot2, fig.cap="Flow duration curves for the validation, predicted with log objective function, predicted with NSE objective function and observed in the Cotter"}
+# Create a data_frame with observed values
+plotFDC_df <- FDC_gen(Cotter_val$data$Q, plot.it=F)
+plotFDC_df$type <- "observed"
+plotFDC_df <- rbind(plotFDC_df, FDC_fitted)
+
+FDC_pred_log <- FDC_gen(Cotter_val_log$fitted.values, plot.it=F)
+FDC_pred_log$type <- "r.sq.log"
+plotFDC_df <- rbind(plotFDC_df, FDC_pred_log)
+
+
+plotFDC_df %>%
+  ggplot(aes(Prob,Flow, colour=type, linetype=type)) +
+    geom_line(size=1.5) + scale_y_log10() +
+    ggtitle("daily flow duration curve") +
+    xlab("Probability") + ylab("log10(Flow mm/day)")
+
+```
+
+Alternatively you might decide that you would like to use a totally different calibration. The standard hydromad objective function balances the monthly water balance with the square root of the r_squared. Check Bennett et al. (2013) which part of the FDC you focus on with this objective function. See <http://hydromad.catchment.org/#hydromad.stats>
+
+```{r include_standard_objective}
+hydromad.options()$objective
+#Using this to calibrate gives:
+
+CotterFit_st <- fitByOptim(CMod,
+                           samples=1000,method="PORT")
+Cotter_val_st <- update(CotterFit_st, newdata = Data_Val)
+
+allMods <- runlist(calib_rsq = CotterFit, Cotter_val, 
+                   calib_log = CotterFit_log,  Cotter_val_log, 
+                   calib_st = CotterFit_st, Cotter_val_st)
+
+round(summary(allMods),2)
+```
+Again using the flow duration curve to look at this result
+
+```{r FDC_plot3,  fig.cap="Flow duration curves for the validation, predicted with hydromad standard, log objective function, and NSE objective function and observed in the Cotter"}
+FDC_pred_st <- FDC_gen(Cotter_val_st$fitted.values, plot.it=F)
+FDC_pred_st$type <- "standard"
+plotFDC_df <- rbind(plotFDC_df, FDC_pred_st)
+
+
+plotFDC_df %>%
+  ggplot(aes(Prob,Flow, colour=type, linetype=type)) +
+    geom_line() + scale_y_log10() +
+    ggtitle("daily flow duration curve") +
+    xlab("Probability") + ylab("log10(Flow mm/day)")
+
+```
+
+Finally, another objective function that you could look at is a balance between the bias and the Nash Sutcliffe Efficiency, which was originally proposed by Neil Viney from CSIRO. This needs to be defined separately as this is not included in hydromad as a standard (but maybe in the future).
+
+```{r, Viney_Obj}
+# use Viney's (includes Bias), see http://hydromad.catchment.org/#hydromad.stats
+hydromad.stats("viney" = function(Q, X, ...) {
+    hmadstat("r.squared")(Q, X, ...) -
+    5*(abs(log(1+hmadstat("rel.bias")(Q,X)))^2.5)})
+# fit again
+CotterFit_Vi <- fitByOptim(CMod,objective=~hmadstat("viney")(Q,X),
+                        samples=1000,method="PORT")
+
+Cotter_val_Vi <- update(CotterFit_Vi, newdata = Data_Val)
+
+allMods <- runlist(calib_rsq=CotterFit, Cotter_val, 
+                   calib.log=CotterFit_log ,  Cotter_val_log, 
+                   calib_st = CotterFit_st, Cotter_val_st, 
+                   calib_Vi = CotterFit_Vi,
+                   Cotter_val_Vi)
+
+round(summary(allMods),2)
+```
+
+Now do FDC again
+```{r FDC_plot4, fig.cap="Flow duration curves for the validation, predicted with hydromad standard, log objective function, and NSE objective function and observed in the Cotter"}
+FDC_pred_Vi <- FDC_gen(Cotter_val_Vi$fitted.values, plot.it=F)
+FDC_pred_Vi$type <- "Viney's"
+plotFDC_df <- rbind(plotFDC_df, FDC_pred_Vi)
+
+# and plot
+plotFDC_df %>%
+  ggplot(aes(Prob,Flow, colour=type, linetype=type)) +
+    geom_line() + scale_y_log10() +
+    ggtitle("daily flow duration curve") +
+    xlab("Probability") + ylab("log10(Flow mm/day)")
+
+```
+
+You can also plot all the predicted and observed flows in a timeseries plot. Note that I use the log scale to exaggerate the low flows.
+```{r plot_all, width = 7, height = 10, fig.cap="Plot of all the different fits and data for Cotter on a log scale"}
+xyplot(allMods, scales=list(y=list(log=TRUE)))
+```
+
+**Question**:  
+- Looking at the Figure 8 through 12 and the related statistics (allMods) can you explain why the different calibration and validation methods perform differently. Keep in mind the discussion about the interpretation of the different statistics from Bennett et al. (2013)  
+- **HOMEWORK** Repeat the validation for San Roldan and look at some differences in objective functions  
+
+
+# References  
+
+Ajami, H., Sharma, A., Band, L. E., Evans, J. P., Tuteja, N. K., Amirthanathan, G. E., & Bari, M. A. (2017). On the non-stationarity of hydrological response in anthropogenically unaffected catchments: an Australian perspective. Hydrol. Earth Syst. Sci., 21(1), 281-294. doi:10.5194/hess-21-281-2017
+
+Bennett, N. D., Croke, B. F. W., Guariso, G., Guillaume, J. H. A., Hamilton, S. H., Jakeman, A. J., . . . Andreassian, V. (2013). Characterising performance of environmental models. Environmental Modelling & Software, 40(0), 1-20. doi:http://dx.doi.org/10.1016/j.envsoft.2012.09.011  
+Dutta, D., Kim, S., Vaze, J., & Hughes, J. (2015). Streamflow predictions in regulated river systems: hydrological non-stationarity versus anthropogenic water use. Proc. IAHS, 371, 35-42. doi:10.5194/piahs-371-35-2015
+
+Oreskes, N., Shrader-Frechette, K., & Belitz, K. (1994). Verification, Validation, and Confirmation of Numerical Models in the Earth Sciences. Science, 263(5147), 641-646.  
+
+Saft, M., Western, A. W., Zhang, L., Peel, M. C., & Potter, N. J. (2015). The influence of multiyear drought on the annual rainfall-runoff relationship: An Australian perspective. Water Resources Research, 51(4), 2444-2463. doi:10.1002/2014WR015348
+
+\center
+**END OF DOCUMENT**
+\center

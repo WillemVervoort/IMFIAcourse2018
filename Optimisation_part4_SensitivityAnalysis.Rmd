@@ -1,0 +1,174 @@
+---
+title: "Optimisation 4: Sensitivity analysis"
+author: "Willem Vervoort"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    number_sections: true
+    toc: true
+    toc_depth: 2
+---
+```{r setup, echo=F, warning=F, message=F}
+# root dir
+knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(lubridate)
+require(knitr)
+```
+
+# Introduction
+
+In hydrological models, there can be many different parameters, some models have more than 100 parameter, but even lumped models can have many. For example, Sacramento, a lumped rainfall runoff model used extensively across the world has 22 parameters.  
+More parameters means more flexibility,as a multi parameter polynomial can be fitted more easily to high variance data. However, this can also result in over fitting and redundant parameters. This means the model fits really well in calibration, but when tested on an independent data set (validation) the model fails, as it is too highly "tuned" to the calibration data.
+In many cases this leads to **equifinality**, which means that different combination of parameter values give the same model performance. This is a topic that we will cover in more detail later in the course.
+To identify which parameters most influence changes in the output, we can run sensitivity analysis. The results of sensitivity analysis can help us reduce the number of parameters to use in the calibration. This will also sort out correlation between different parameters (identifying redundant parameters).
+
+# Sensitivity Analysis  
+There are different approaches to running sensitivity analysis. One way of doing this is using a simple Monte Carlo and running a linear regression with the parameters values against the objective function. This is the approach used in SWAT-Cup. More formal sensitivity analysis can be run using a few extra packages, namely `randtoolbox` and `sensitvity`. 
+
+Here we will show how this is done with GR4J, and following in general the paper by Shin et al. (2013), but the Razavi and Gupta (2015) paper is also a good background for sensitivity analysis.
+
+You might have to run these install packages for this tutorial:
+```{r packagesInstall, eval=F}
+install.packages(c("randtoolbox", "sensitivity"))
+```
+
+Once the pacakges are installed, we can take the same steps as in the last session, load the packages, the data and select a time period for the analysis.
+
+```{r packages_Data, message=F, warning=F}
+require(hydromad)
+require(randtoolbox)
+require(sensitivity)
+
+# again set.seed() to make results repeatable
+set.seed(20)
+
+# Load the data
+data(Cotter)
+# select a shorter period
+Data_Cal<- window(Cotter, start = "1970-01-01",end = "1975-12-31")
+```
+
+## Define the model, but with ranges of parameters
+
+Similar to calibration, we need to develop a model, which includes ranges of parameters. We want the sensitivity analysis to explore the parameter space and calculate the change in objective function with change in parameters:  
+$S_i = \frac{\delta (\text{Obj fun value})}{\delta p_i}$  
+Where S is the sensitivity for parameter $p_i$.  
+
+So, using GR4J in hydromad, we can define a model.    
+```{r model_def}
+CMod <- hydromad(Data_Cal, sma="gr4j",
+                 routing="gr4jrouting",
+  etmult=c(0.05,0.5),x1 = c(100,1500), x2 = c(-30,20), 
+  x3 =c(5,500), x4 = c(0.5,10))
+```
+
+## Monte Carlo using `fitBySampling()`  
+The first approach to demonstrate sensitivity analysis is using a Monte Carlo approach. In the first tutorial we demonstrated the principles of Monte Carlo, which showed how we take a random sample of the parameters and calculate for each combination of parameters the objective fuction using the predicted and observed values in the model. Luckily, using hydromad, we don't have to set up the loop and calculation of the objective function. hydromad has a built in function called `fitBySampling()` which we can use to do the analysis. The function actually also identifies the solution with the best objective function, but we are not that interested in this.  
+The most important part is that the function remembers all the parameter sets and all the objective function values, thus allowing the calculation of the sensitivities using multilinear regression here. 
+The multi linear regression model is simply:  
+
+$\text{Obj fun value} = \sum{\beta_i p_i}$  
+
+Identifying the significance of the different $p_i$ will identify the sensitivity of each $p_i$. Note that we decided it is better to not include an intercept,  but this is for discussion  
+
+```{r fitBysampling}
+
+FBS <- fitBySampling(CMod,
+              objective =~hmadstat("r.squared")(Q,X),
+              samples=500, sampletype = "latin.hypercube")
+
+summary(FBS)
+```
+
+The above example samples the distribution of parameters 500 times using latin hypercube sampling. This is important as this means that all the parts of the parameter distribution are equally sampled.
+
+This result just gives the summary of the statistics of the best fit. To be able to do the multi linear regression we need to extract the parameters sets and the objective function values from the `FBS` object. The `FBS` object is a list, which is a typical way stores objects. And within the list there is a sub list called `fit.result`. This part of the list contains again two objects, the `objseq`, which is the vector of objective function values, and `psets`, which is a dataframe of the parameter sets.
+To be able to do the regression, we would like all data to be in 1 data frame.
+
+```{r regression}
+reg_df <- FBS$fit.result$psets
+reg_df$objseq <- FBS$fit.result$objseq
+
+# regression
+lm_mod <- lm(objseq~ 0 + x1 + x2 + x3 + x4 + etmult,
+             data = reg_df)
+summary(lm_mod)
+
+```
+Even though this model predicts only about 15% of the variation in the objective function, it is significant and indicates that x2 and x3 are the most sensitive parameters, followed by x1 and x4 and only etmult does not matter much.
+
+**Question**  
+- Rerun the fitBySampling using "r.sq.log". Does this change the results?  
+- Rerun the analysis with 1000 samples does this change the results?  
+
+## Morris
+The Morris sensitivity analysis looks quite similar to the Monte Carlo analysis, as it also runs through a range of parameters. Howevere, it is a more direct sensitivity analysis and is also a global sensitivity analysis taking into account the interaction between parameters.
+
+The function call for the function `morris()` is quite complex with several elements. We will go through this in class, but you can also consult the helpfile.  
+```{r morrishelp, eval =FALSE}
+?morris
+```
+
+Below is the full call for the morris function. It uses the function `evalPars` as a model, which evaluates a model over a matrix of parameters. the parameter factor defines the number of parameters to evaluate, which is all the parameters for which we defined ranges in CMod, r is the number of evaluations, while design is the sampling structure for which more detail is given in the help file. after a few more definitions, we define the model as the object and the objective function (the NSE in this case).
+
+The whole function takes a little while to run.
+
+```{r Morris}
+mm <- morris(model=evalPars,
+             factor=names(getFreeParsRanges(CMod)),
+             r=1000,
+             design=list(type="oat",
+                         levels=10, grid.jump=2),
+             binf=sapply(getFreeParsRanges(CMod),min),
+             bsup=sapply(getFreeParsRanges(CMod),max),
+             object=CMod,
+             objective=~hmadstat("r.squared")(Q,X)
+)
+mm
+```
+
+
+A result of the Morris sensitivity analysis is partly the same as multi linear regression model. It agrees with x2 and x3 being the most sensitive parameters in the model. However, in this case the parameter emult (which transforms the maximum temperature into potential ET)is relatively sensitive (a somewhat higher value of mu compared to x1 and x4). So it would be worth calibrating this. In contrast, in the parameters x1 and x4 seem to have very little influence and this suggests they could be fixed.
+
+## SOBOL
+
+SOBOL is a global sensitivity method, similar to the first Monte Carlo multi linear regression method. Similar to the first method, it a variance based method (Shin et al. 2013) as it decomposes the contributions of the different parameters to the overall variance of the model. This means that not only does it take into account the sensitivity of the individual parameters, it also takes into account the cross correlation between parameters. As Shin et al (2013) write (page 137):"It generates a First-Order Sensitivity Index (FSI) and a Total Sensitivity Index (TSI). The FSI is defined as the partial contribution of each parameter to the output variance divided by the total output variance."
+
+Again the SOBOL function is quite complex, and there are in fact several SOBOL functions that can be used. Here I am following Shin et al. 2013 and using `sobol2002()`. However, the package sensitivity includes several other variants of the sobol algorithm.
+
+The function includes several inputs, again using the hydromad function evalPars to run the model across a parameter matrix. But here the parameter sets are generated in the vectors X1 and X2, and there are `n` (1000 in this case) combinations.
+
+This is a "bootstrap" method, which means it reruns the analysis several times (as it has some stochasticity) and this is the parameter `nboot`. For more information see the `sobol2002` helpfile.
+
+```{r SOBOL}
+n <- 1000
+X1 <- hydromad::parameterSets(getFreeParsRanges(CMod),n)
+X2 <- hydromad::parameterSets(getFreeParsRanges(CMod),n)
+Sob_sens <- sobol2002(model = evalPars,
+               X1 = X1, X2 = X2,
+               nboot = 100,
+               object=CMod,
+               objective=~hmadstat("r.squared")(Q,X)
+               
+)
+Sob_sens
+```
+
+The SOBOL analysis is slightly different, but confirms the Morris results in both the First order and the total indices. Again x2 and x3 are the most sensitive, followed by etmult.
+
+**Question**  
+
+- We have used the NSE ("r.squared") as the objective function. Would a different objective function give different results?  
+- Test the Morris or SOBOL method on the Santa Lucia data. Does this give you different sensitivities?  
+
+# References
+
+Razavi, S., & Gupta, H. V. (2015). What do we mean by sensitivity analysis? The need for comprehensive characterization of "global" sensitivity in Earth and Environmental systems models. Water Resources Research, 51(5), 3070-3092. doi:10.1002/2014WR016527  
+
+Shin, M.-J., Guillaume, J. H. A., Croke, B. F. W., & Jakeman, A. J. (2013). Addressing ten questions about conceptual rainfall-runoff models with global sensitivity analyses in R. Journal of Hydrology, 503, 135-152. doi:http://dx.doi.org/10.1016/j.jhydrol.2013.08.047
+
+\center
+**END OF DOCUMENT**
+\center

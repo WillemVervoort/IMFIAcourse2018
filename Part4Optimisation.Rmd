@@ -1,0 +1,115 @@
+---
+title: "Part4 Sensitivity"
+author: "Willem Vervoort"
+date: "4 July 2018"
+output: pdf_document
+---
+
+Set working directory and load packages
+
+```{r}
+require(hydromad)
+require(randtoolbox)
+require(sensitivity)
+# again set.seed() to make results repeatable
+set.seed(20)
+# Load the data
+data(Cotter)
+# export Cotter data for Pablo
+save(Cotter,file="C:/Users/rver4657/Dropbox (Sydney Uni)/IMFIA_course_July2018/data/Cotter.Rdata")
+
+# select a shorter period
+Data_Cal<- window(Cotter, start = "1970-01-01",end = "1975-12-31")
+```
+
+Define a model with ranges of parameters
+
+```{r}
+CMod <- hydromad(Data_Cal, sma="gr4j",
+    routing="gr4jrouting",
+    etmult=c(0.05,0.5),x1 = c(100,1500), x2 = c(-30,20),
+    x3 =c(5,500), x4 = c(0.5,10))
+```
+
+## MLR Monte Carlo sensitivity
+
+Using fitBySampling
+
+```{r}
+FBS <- fitBySampling(CMod,
+  objective =~hmadstat("r.squared")(Q,X),
+  samples=1000, sampletype = "latin.hypercube")
+summary(FBS)
+```
+
+Make a data frame with the results of the optimisation (the objective function values) and a matrix of the parameter values
+
+```{r}
+reg_df <- FBS$fit.result$psets
+reg_df$objseq <- FBS$fit.result$objseq
+# regression
+lm_mod <- lm(objseq~0 + x1 + x2 + x3 + x4 + etmult,
+    data = reg_df)
+summary(lm_mod)
+```
+
+Better to not include an intercept, as the intercept might be hiding some of the variation in the model. In this case x2 and x3 are the most sensitive (small p-value), but x1 and x4 are also sensitive. The least sensitive is etmult.
+So you could set etmult = 0.15 in the model.
+
+**Question** rerun with r.sq.log
+
+```{r}
+FBS <- fitBySampling(CMod,
+  objective =~hmadstat("r.sq.log")(Q,X),
+  samples=1000, sampletype = "latin.hypercube")
+summary(FBS)
+```
+
+```{r}
+reg_df <- FBS$fit.result$psets
+reg_df$objseq <- FBS$fit.result$objseq
+# regression
+lm_mod <- lm(objseq~0 + x1 + x2 + x3 + x4 + etmult,
+    data = reg_df)
+summary(lm_mod)
+```
+
+## Morris
+
+Simply copy paste from the handout, explanation in class
+
+```{r}
+mm <- morris(model=evalPars,
+  factor=names(getFreeParsRanges(CMod)),
+  r=1000,
+  design=list(type="oat",
+    levels=10, grid.jump=2),
+  binf=sapply(getFreeParsRanges(CMod),min),
+  bsup=sapply(getFreeParsRanges(CMod),max),
+  object=CMod,
+  objective=~hmadstat("r.squared")(Q,X)
+)
+mm
+```
+
+This shows different results from the multi linear regression in that now x2 and x3 are highly sensitive (large mu value) but also shows high interaction (high sigma value). etmult is the next sensitive value.
+
+
+## SOBOL
+
+Again clip and paste:
+
+```{r}
+n <- 1000
+X1 <- hydromad::parameterSets(getFreeParsRanges(CMod),n)
+X2 <- hydromad::parameterSets(getFreeParsRanges(CMod),n)
+Sob_sens <- sobol2002(model = evalPars,
+X1 = X1, X2 = X2,
+nboot = 100,
+object=CMod,
+objective=~hmadstat("r.squared")(Q,X)
+)
+Sob_sens
+```
+
+

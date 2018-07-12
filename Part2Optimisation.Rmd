@@ -1,0 +1,168 @@
+---
+title: "Part2 Optimisation in class"
+author: "Willem Vervoort"
+date: "3 July 2018"
+output: pdf_document
+---
+
+This is the document that gives the code that was done in class for the second part of day 1
+
+```{r setup, echo = F}
+# root dir
+knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+```
+
+# Start of real code
+
+You might want to set your working directory
+
+```{r}
+setwd("C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+```
+
+## load packages
+
+```{r}
+#install.packages("bbmle")
+# install.packages("stats4")
+require(bbmle)
+require(stats4)
+```
+
+Create random data
+
+```{r}
+set.seed(1001)
+# 100 random samples, mean =3 sd = 2
+N <- 100
+x <- rnorm(N, mean = 3, sd = 2)
+mean(x)
+sd(x)
+```
+
+Write the likelihood function in code
+```{r}
+LL <- function(mu, sigma) {
+  # define perfect normal distribution
+  R = suppressWarnings(dnorm(x, mu, sigma))
+  # likelihood: minus sum of logged values (one number)
+  -sum(log(R))
+}
+```
+
+Now fit this function using mle
+
+```{r}
+# use "mle()" to fit
+mle(LL, start = list(mu = 1, sigma=1))
+```
+
+## fitting a linear model using LL
+Use the same data as in part 1
+
+```{r}
+require(tidyverse)
+# random data x data linear regression
+x <- rnorm(100)
+# A function y
+y_fun <- function(x,b0, b1)
+{
+  y_out = b0 + b1*x
+  # add random error
+  y_out <- y_out + rnorm(length(x),0,0.5)
+  return(y_out)
+}
+b0 = 1
+b1 = 1.5
+test_data <- data_frame(x = x, #x data in a column called x
+      y = y_fun(x, b0,b1)) # y data from y_fun
+```
+
+check using lm
+
+```{r}
+mod <- lm(y~x,test_data)
+summary(mod)
+```
+
+
+Now define the maximum likelihood for the fitting of a linear model
+
+```{r}
+# Now using maximum likelihood:
+LL <- function(beta0, beta1, mu, sigma) {
+  # Find residuals from linear model
+  Resid = y_in - x_in * beta1 - beta0
+  ## Calculate the likelihood for the residuals 
+  #(with mu and sigma as parameters)
+  # These should be normal!!
+  R = suppressWarnings(dnorm(Resid, mu, sigma))
+  ##
+  #Sum the log likelihoods for all of the data points
+  # This is the objective function
+  -sum(log(R))
+  }
+```
+
+Show how this fits
+
+```{r}
+# There is a problem if you choose values far away from reality
+# But reasonable estimates give reasonable results
+y_in <- test_data$y
+x_in <- test_data$x
+fit <- mle2(LL, start = list(beta0 = 0.1, 
+                             beta1 = 4,
+                              mu=0, sigma=1))
+summary(fit)
+```
+
+Redundancy of the parameters shows through the combination of mu and bias
+
+Make a quick plot of the results
+```{r}
+test_data %>%
+  mutate(LLfit = fit@coef[1] +
+           fit@coef[2]*test_data$x) %>%
+  ggplot(aes(x,y)) + geom_point(colour="red",
+                                size=3) +
+  geom_smooth(method="lm", formula = y~x, se = F) +
+  geom_line(aes(x,LLfit), col="green")
+```
+
+So should we fix mu = 0, we know it has to be 0
+
+```{r}
+fit0 <- mle2(LL, data=test_data, 
+             start = list(beta0 = 4,
+                  beta1 = 2, sigma=1),
+             fixed = list(mu=0))
+summary(fit0)
+
+```
+
+
+A final plot of all the fits
+```{r}
+test_data %>%
+  mutate(Lmfit = mod$coefficients[1] +
+    mod$coefficients[2]*x) %>%
+  mutate(LLfit = fit@coef[1] + fit@coef[2]*x) %>%
+  mutate(LLfit0 = fit0@coef[1] +
+    fit0@coef[2]*x) %>%
+  gather(key="method", value="values",
+    Lmfit,LLfit, LLfit0) %>%
+  ggplot(aes(x,y)) +
+    geom_point(colour="blue", size=3) +
+    geom_line(aes(x,values, col=method,
+    linetype=method, size=method)) +
+    scale_size_manual(values=c(1.5,1.5,1))
+```
+
+
+
+
+
+
+
+

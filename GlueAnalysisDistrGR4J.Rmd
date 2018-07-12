@@ -18,6 +18,12 @@ require(hydromad)
 require(knitr)
 ```
 
+This is part of a course taught at IMFIA UdelaR in collaboration with MSc Jimena Alonso in July 2018. It is part of the project INIA-IRI-USYD.
+
+```{r logos, echo=F}
+include_graphics("logos.png")
+```
+
 # Introduction
 
 Packages needed  
@@ -39,7 +45,7 @@ To start, we will load the same data as in the demonstration of the distributed 
 
 Load the  `GR4J@distr.R` script: 
 ```{r}
-source("scripts/GR4J@distr.R")
+source("Rcode_IMFIA_course2018/GR4J@distr.R")
 ```
 
 

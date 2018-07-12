@@ -4,8 +4,19 @@ author: "Willem Vervoort"
 date: "5 July 2018"
 output: pdf_document
 ---
+```{r setup, echo = F}
+# root dir
+knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+require(knitr)
+```
 
-Redo calibration of part 3
+This is part of a course taught at IMFIA UdelaR in collaboration with MSc Jimena Alonso in July 2018. It is part of the project INIA-IRI-USYD.
+
+```{r logos, echo=F}
+include_graphics("logos.png")
+```
+
+## Redo calibration of part 3
 
 ```{r}
 require(hydromad)

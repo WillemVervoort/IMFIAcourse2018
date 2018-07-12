@@ -10,13 +10,20 @@ This is the document that gives the code that was done in class for the third pa
 ```{r setup, echo = F}
 # root dir
 knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
+require(knitr)
+```
+
+This is part of a course taught at IMFIA UdelaR in collaboration with MSc Jimena Alonso in July 2018. It is part of the project INIA-IRI-USYD.
+
+```{r logos, echo=F}
+include_graphics("logos.png")
 ```
 
 # Start of real code
 
 You might want to set your working directory
 
-```{r}
+```{r, eval=F}
 setwd("C:/Users/rver4657/owncloud/Uruguay/coursematerial")
 ```
 

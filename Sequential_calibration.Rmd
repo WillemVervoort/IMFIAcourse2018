@@ -36,7 +36,7 @@ The idea of the sequential optimisation is that you first calibrate ony the para
 First load the script with the model.
 
 ```{r}
-source("scripts/GR4J@distrv2.R")
+source("Rcode_IMFIA_course2018/GR4J@distrv2.R")
 ```
 
 This loads six functions in your environment. The first is the actual model function, `GR4JSubBasins.run()`, the other is a specific objective function, `DistGR4J_objfun()`, which can be used with `optim()` to minimise the required internal objective function (such as "r.squared").

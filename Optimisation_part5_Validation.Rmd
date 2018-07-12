@@ -17,6 +17,13 @@ require(lubridate)
 require(knitr)
 ```
 
+This is part of a course taught at IMFIA UdelaR in collaboration with MSc Jimena Alonso in July 2018. It is part of the project INIA-IRI-USYD.
+
+```{r logos, echo=F}
+include_graphics("logos.png")
+```
+
+
 # Introduction
 
 This session expands the knowledge we gained in earlier practical activities to look at validation and different objective functions

@@ -18,6 +18,12 @@ require(hydromad)
 require(knitr)
 ```
 
+This is part of a course taught at IMFIA UdelaR in collaboration with MSc Jimena Alonso in July 2018. It is part of the project INIA-IRI-USYD.
+
+```{r logos, echo=F}
+include_graphics("logos.png")
+```
+
 # Introduction
 
 ## Bulk downloading satellite data using scripts  
@@ -232,13 +238,13 @@ SL_MODISET <- zoo(SL_ET_mean$meanET, order.by=SL_ET_mean$Date)
 
 ## Define and calibrate GR4J
 We will again use the "GR4J" model in hydromad package. The approach will be similar to day 2 but we will also test calibration with satellite derived ET. This basically repeats some of the analysis Vervoort et al (2014) did with IHACRES. 
-To make things easier, Joseph Guillaume and I have written a series of functions in R to help do this in hydromad. These will be incorporated in hydromad in the future, but at the moment, it just exists as separate files. Load these first using `source()`, and they are stored in the "scripts' folder on dropbox.
+To make things easier, Joseph Guillaume and I have written a series of functions in R to help do this in hydromad. These will be incorporated in hydromad in the future, but at the moment, it just exists as separate files. Load these first using `source()`, and they are stored in the "Rcode_IMFIA_course2018" folder.
 
 ```{r sourceFun}
-source("scripts/leapfun.R")
-source("scripts/ETa.merge.R")
-source("scripts/plot.ET.R")
-source("scripts/ETfit.objectives.R")
+source("Rcode_IMFIA_course2018/leapfun.R")
+source("Rcode_IMFIA_course2018/ETa.merge.R")
+source("Rcode_IMFIA_course2018/plot.ET.R")
+source("Rcode_IMFIA_course2018/ETfit.objectives.R")
 
 ```
 

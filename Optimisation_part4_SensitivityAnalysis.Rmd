@@ -17,6 +17,12 @@ require(lubridate)
 require(knitr)
 ```
 
+This is part of a course taught at IMFIA UdelaR in collaboration with MSc Jimena Alonso in July 2018. It is part of the project INIA-IRI-USYD.
+
+```{r logos, echo=F}
+include_graphics("logos.png")
+```
+
 # Introduction
 
 In hydrological models, there can be many different parameters, some models have more than 100 parameter, but even lumped models can have many. For example, Sacramento, a lumped rainfall runoff model used extensively across the world has 22 parameters.  

@@ -17,6 +17,12 @@ require(lubridate)
 require(knitr)
 ```
 
+This is part of a course taught at IMFIA UdelaR in collaboration with MSc Jimena Alonso in July 2018. It is part of the project INIA-IRI-USYD.
+
+```{r logos, echo=F}
+include_graphics("logos.png")
+```
+
 # R for hydrological optimisation (hydromad example)
 
 In this practical session we will apply what we learned from our simple optimisation to hydrological modelling. It will also include a practical example of how you can use R to do hydrological modelling using the package hydromad.

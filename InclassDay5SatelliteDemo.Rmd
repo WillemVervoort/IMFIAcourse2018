@@ -8,6 +8,13 @@ output: pdf_document
 # root dir
 knitr::opts_knit$set(root.dir = "C:/Users/rver4657/owncloud/Uruguay/coursematerial")
 knitr::opts_chunk$set(echo = TRUE)
+require(knitr)
+```
+
+This is part of a course taught at IMFIA UdelaR in collaboration with MSc Jimena Alonso in July 2018. It is part of the project INIA-IRI-USYD.
+
+```{r logos, echo=F}
+include_graphics("logos.png")
 ```
 
 Load packages
@@ -153,10 +160,10 @@ head(SL_MODISET)
 Load additional scripts to help the calibrations
 
 ```{r}
-source("scripts/leapfun.R")
-source("scripts/ETa.merge.R")
-source("scripts/plot.ET.R")
-source("scripts/ETfit.objectives.R")
+source("Rcode_IMFIA_course2018/leapfun.R")
+source("Rcode_IMFIA_course2018/ETa.merge.R")
+source("Rcode_IMFIA_course2018/plot.ET.R")
+source("Rcode_IMFIA_course2018/ETfit.objectives.R")
 ```
 
 Merge the PasoPache dataset with the satellite data

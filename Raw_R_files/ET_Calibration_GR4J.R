@@ -7,6 +7,9 @@ require(lubridate)
 require(hydromad)
 require(knitr)
 
+## ----logos, echo=F-------------------------------------------------------
+include_graphics("logos.png")
+
 ## ---- eval = F-----------------------------------------------------------
 ## require(tidyverse)
 ## require(lubridate)
@@ -119,10 +122,10 @@ load("data/PasoPache.Rdata")
 SL_MODISET <- zoo(SL_ET_mean$meanET, order.by=SL_ET_mean$Date)
 
 ## ----sourceFun-----------------------------------------------------------
-source("scripts/leapfun.R")
-source("scripts/ETa.merge.R")
-source("scripts/plot.ET.R")
-source("scripts/ETfit.objectives.R")
+source("Rcode_IMFIA_course2018/leapfun.R")
+source("Rcode_IMFIA_course2018/ETa.merge.R")
+source("Rcode_IMFIA_course2018/plot.ET.R")
+source("Rcode_IMFIA_course2018/ETfit.objectives.R")
 
 
 ## ----dataLoad_merge, fig.cap="Figure 5: Merged dataset for the Santa Lucia Catchment"----
@@ -186,8 +189,22 @@ summary(SL_Fit_Modis)
 # Plotting the results
 xyplot(SL_Fit_Modis, with.P = TRUE)
 
-## ----plotET, fig.cap="Figure 8: Plot showing observed vs predicted actual ET"----
-plot.ET(caldata=data_modis_cal,SL_Fit_Modis)
+## ----plotET, fig.cap="Plot showing observed vs predicted actual ET after calibration"----
+plot.ET(data=data_modis_cal,SL_Fit_Modis)
+
+## ----plot_ET_wo, , fig.cap="Plot showing observed vs predicted actual ET, w/o calibration"----
+plot.ET(data=data_modis_cal,SL_fit)
+
+## ------------------------------------------------------------------------
+hmadstat("r.squared")(Q=data_modis_cal$aET,X=SL_fit$U$ET)
+hmadstat("r.squared")(Q=data_modis_cal$aET,X=SL_Fit_Modis$U$ET)
+
+## ------------------------------------------------------------------------
+require(epiR)
+epi.ccc(data_modis_cal$aET,SL_fit$U$ET)$rho.c
+epi.ccc(data_modis_cal$aET,SL_Fit_Modis$U$ET)$rho.c
+
+
 
 ## ----ModelPerformance----------------------------------------------------
 coef(SL_fit)

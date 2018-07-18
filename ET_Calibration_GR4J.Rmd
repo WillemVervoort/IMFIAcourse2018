@@ -324,12 +324,42 @@ xyplot(SL_Fit_Modis, with.P = TRUE)
 
 We can now also look at how it predicts actual ET and how this compares to the observed ET. Use the `plot.ET()` function.  
 
-```{r plotET, fig.cap="Figure 8: Plot showing observed vs predicted actual ET"}
-plot.ET(caldata=data_modis_cal,SL_Fit_Modis)
+```{r plotET, fig.cap="Plot showing observed vs predicted actual ET after calibration"}
+plot.ET(data=data_modis_cal,SL_Fit_Modis)
 ```
 
-## Model comparison
+Also plot the fit on ET without calibrating on ET
+```{r plot_ET_wo, , fig.cap="Plot showing observed vs predicted actual ET, w/o calibration"}
+plot.ET(data=data_modis_cal,SL_fit)
+```
+
+
+
+## Model comparison for performance
 We can now compare the model performance and whether this has changed for the two calibration methods.  
+
+Start with looking at the performance on ET, we don't have a function for this, so we will do this the old fashioned way
+
+```{r}
+hmadstat("r.squared")(Q=data_modis_cal$aET,X=SL_fit$U$ET)
+hmadstat("r.squared")(Q=data_modis_cal$aET,X=SL_Fit_Modis$U$ET)
+```
+
+Only a very small improvement and not very good.
+
+You can also look at Lin's concordance, using the epiR package
+
+```{r}
+require(epiR)
+epi.ccc(data_modis_cal$aET,SL_fit$U$ET)$rho.c
+epi.ccc(data_modis_cal$aET,SL_Fit_Modis$U$ET)$rho.c
+
+
+```
+
+At least this has slightly improved. (the "est" value is larger)
+
+### Traditional model performance
 
 ```{r ModelPerformance}
 coef(SL_fit)

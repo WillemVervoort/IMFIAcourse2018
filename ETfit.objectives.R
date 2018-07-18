@@ -40,9 +40,10 @@ hydromad.stats("ETaggr" = function(Q,X,...,DATA=DATA,model=model,objf=hmadstat("
   #
   #browser()
   aET.fin <- aggregate(DATA$aET,list(date=coredata(DATA$et.period)),sum)
-  ET.fin <- aggregate(hydromad:::stripWarmup(model$U$ET,model$warmup),
-                      list(date=coredata(DATA$et.period)),
-                      sum)
+  ET.fin <- aggregate(hydromad:::stripWarmup(model$U$ET,
+                                      model$warmup),
+                        list(date=coredata(DATA$et.period)),
+                        sum)
   obj <- objf(coredata(aET.fin),coredata(ET.fin),DATA=DATA,model=model)
   return(obj)
 })
